@@ -3,7 +3,7 @@ Main API router for v1 endpoints.
 """
 
 from fastapi import APIRouter
-from app.api.v1.endpoints import files, text, voice, synthesis, session
+from app.api.v1.endpoints import files, text, voice, synthesis, session, voice_model_training, quality_monitoring, post_processing
 
 api_router = APIRouter()
 
@@ -13,6 +13,8 @@ api_router.include_router(text.router, prefix="/text", tags=["text"])
 api_router.include_router(voice.router, prefix="/voice", tags=["voice"])
 api_router.include_router(synthesis.router, prefix="/synthesis", tags=["synthesis"])
 api_router.include_router(session.router, prefix="/session", tags=["session"])
+api_router.include_router(voice_model_training.router, prefix="/voice-models", tags=["voice-models"])
+api_router.include_router(quality_monitoring.router, prefix="/quality-monitoring", tags=["quality-monitoring"])
 
 
 @api_router.get("/status")

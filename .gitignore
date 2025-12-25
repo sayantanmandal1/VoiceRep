@@ -1,5 +1,6 @@
 .kiro
 # Python
+backend/.hypothesis
 __pycache__/
 *.py[cod]
 *$py.class
