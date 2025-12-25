@@ -152,6 +152,17 @@ export default function SynthesisManager({
       pollProgress(response.task_id);
 
     } catch (error: any) {
+      console.error('Synthesis start error:', error);
+      
+      // Log detailed error information for debugging
+      console.log('Synthesis error details:', {
+        message: error.message,
+        name: error.name,
+        stack: error.stack,
+        response: error.response,
+        request: error.request
+      });
+      
       const errorMessage = error.message || 'Failed to start synthesis';
       
       // Mark current step as failed
@@ -176,7 +187,7 @@ export default function SynthesisManager({
 
   // Poll for synthesis progress using API client
   const pollProgress = useCallback(async (taskId: string) => {
-    const maxAttempts = 120; // 2 minutes with 1-second intervals
+    const maxAttempts = 300; // 5 minutes with 1-second intervals
     let attempts = 0;
 
     // Start text processing step
@@ -322,10 +333,29 @@ export default function SynthesisManager({
       } catch (error: any) {
         console.error('Error polling progress:', error);
         
+        // Log detailed error information for debugging
+        console.log('Error details:', {
+          message: error.message,
+          name: error.name,
+          stack: error.stack,
+          response: error.response,
+          request: error.request
+        });
+        
         // If it's a 202 (still processing), continue polling
         if (error.message?.includes('202') && attempts < maxAttempts) {
           setTimeout(poll, 1000);
           return;
+        }
+
+        // Check if this might be a successful response that's being mishandled
+        if (error.response && error.response.status >= 200 && error.response.status < 300) {
+          console.warn('Received successful response but treated as error:', error.response);
+          // Try to continue polling as this might be a parsing issue
+          if (attempts < maxAttempts) {
+            setTimeout(poll, 1000);
+            return;
+          }
         }
 
         const errorMessage = error.message || 'Failed to get synthesis status';
