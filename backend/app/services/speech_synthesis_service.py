@@ -23,6 +23,8 @@ from app.schemas.voice import VoiceModelSchema, VoiceProfileSchema
 from app.core.config import settings
 # Import real voice synthesis service
 from app.services.real_voice_synthesis_service import real_voice_synthesis_service
+# Import ensemble voice synthesis engine
+from app.services.ensemble_voice_synthesis_engine import ensemble_voice_synthesizer
 
 logger = logging.getLogger(__name__)
 
@@ -177,7 +179,41 @@ class SpeechSynthesizer:
         """Use real TTS service for synthesis."""
         try:
             if progress_callback:
-                progress_callback(20, "Using real TTS service")
+                progress_callback(20, "Using ensemble TTS service")
+            
+            # Check if ensemble service is available and initialized
+            if hasattr(ensemble_voice_synthesizer, 'loaded_models') and ensemble_voice_synthesizer.loaded_models:
+                # Use ensemble synthesis for highest quality
+                logger.info("Using ensemble voice synthesis for maximum quality")
+                
+                # Convert voice model to voice profile for ensemble synthesis
+                voice_profile = self._convert_voice_model_to_profile(voice_model)
+                
+                success, output_path, metadata = await ensemble_voice_synthesizer.synthesize_speech_ensemble(
+                    text=text,
+                    voice_profile=voice_profile,
+                    language=language or "en",
+                    progress_callback=progress_callback
+                )
+                
+                if success and output_path:
+                    processing_time = time.time() - start_time
+                    
+                    # Update metadata with ensemble information
+                    metadata.update({
+                        "text": text,
+                        "language": language or "en",
+                        "voice_model_id": voice_model.id,
+                        "processing_time": processing_time,
+                        "synthesis_method": "ensemble_voice_cloning",
+                        "ensemble_synthesis": True
+                    })
+                    
+                    return success, output_path, metadata
+                else:
+                    logger.warning("Ensemble synthesis failed, falling back to real TTS")
+            
+            # Fallback to real voice synthesis service
             
             # Get reference audio path from voice model
             reference_audio_path = voice_model.model_path
@@ -221,6 +257,18 @@ class SpeechSynthesizer:
         except Exception as e:
             logger.error(f"Real synthesis failed: {str(e)}")
             return False, None, {"error": str(e)}
+    
+    def _convert_voice_model_to_profile(self, voice_model: VoiceModelSchema) -> 'VoiceProfileSchema':
+        """Convert VoiceModelSchema to VoiceProfileSchema for ensemble synthesis."""
+        from app.schemas.voice import VoiceProfileSchema
+        
+        return VoiceProfileSchema(
+            id=voice_model.id,
+            reference_audio_id=getattr(voice_model, 'reference_audio_id', 'default'),
+            voice_characteristics=voice_model.voice_characteristics or {},
+            quality_score=voice_model.quality_score or 0.8,
+            created_at=voice_model.created_at
+        )
     
     def _detect_language(self, text: str) -> str:
         """Detect language of input text."""

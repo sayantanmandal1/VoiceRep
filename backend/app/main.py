@@ -29,6 +29,7 @@ from app.api.v1.api import api_router
 from app.middleware.session_middleware import setup_session_middleware
 # from app.services.cleanup_service import schedule_cleanup_task
 from app.services.real_voice_synthesis_service import initialize_voice_synthesis_service
+from app.services.ensemble_voice_synthesis_engine import initialize_ensemble_synthesis_service
 
 # Import models to ensure they are registered with Base
 from app.models import (
@@ -87,6 +88,22 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.error(f"Voice synthesis service failed to initialize after retries: {e}")
             logger.info("Application will continue with limited functionality")
+        
+        # Initialize ensemble voice synthesis service
+        logger.info("Initializing ensemble voice synthesis service...")
+        try:
+            ensemble_service_ready = await initialize_with_fallback(
+                initialize_ensemble_synthesis_service,
+                max_retries=2,
+                delay=5
+            )
+            if ensemble_service_ready:
+                logger.info("Ensemble voice synthesis service initialized successfully")
+            else:
+                logger.warning("Ensemble synthesis service initialization failed - falling back to single model synthesis")
+        except Exception as e:
+            logger.error(f"Ensemble synthesis service failed to initialize after retries: {e}")
+            logger.info("Application will continue with single model synthesis")
         
         logger.info("Application startup completed successfully")
         

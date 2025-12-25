@@ -21,7 +21,17 @@ from app.schemas.voice import (
 )
 from app.models.voice import VoiceProfile, VoiceModel, ProsodyFeatures, EmotionalProfile
 from app.core.config import settings
-# from app.services.performance_monitoring_service import performance_monitor
+from app.services.multi_dimensional_voice_analyzer import MultiDimensionalVoiceAnalyzer
+
+# Simple performance monitor mock
+class PerformanceMonitor:
+    def start_operation(self, operation_type, operation_id, metadata=None):
+        pass
+    
+    def end_operation(self, operation_id, success=True, error_message=None, additional_metadata=None):
+        pass
+
+performance_monitor = PerformanceMonitor()
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +45,189 @@ class VoiceAnalyzer:
         self.n_fft = 2048
         self.n_mfcc = 13
         self.n_formants = 4
+        
+        # Initialize multi-dimensional analyzer
+        self.multi_dimensional_analyzer = MultiDimensionalVoiceAnalyzer(sample_rate=self.sample_rate)
+        
+    def analyze_voice_comprehensive_multidimensional(self, audio_path: str) -> VoiceAnalysisResult:
+        """
+        Perform comprehensive multi-dimensional voice analysis with 1000+ features.
+        
+        Args:
+            audio_path: Path to the audio file
+            
+        Returns:
+            VoiceAnalysisResult containing comprehensive voice characteristics
+        """
+        start_time = time.time()
+        operation_id = f"multidim_voice_analysis_{int(time.time() * 1000)}"
+        
+        # Start performance monitoring
+        performance_monitor.start_operation(
+            'multidimensional_voice_analysis', 
+            operation_id,
+            {'audio_path': audio_path}
+        )
+        
+        try:
+            # Use multi-dimensional analyzer for comprehensive analysis
+            comprehensive_analysis = self.multi_dimensional_analyzer.analyze_voice_comprehensive(audio_path)
+            
+            # Extract components from comprehensive analysis
+            pitch_features = comprehensive_analysis['pitch_features']
+            formant_features = comprehensive_analysis['formant_features']
+            timbre_features = comprehensive_analysis['timbre_features']
+            prosodic_features = comprehensive_analysis['prosodic_features']
+            emotional_features = comprehensive_analysis['emotional_features']
+            voice_fingerprint = comprehensive_analysis['voice_fingerprint']
+            quality_metrics = comprehensive_analysis['quality_metrics']
+            
+            # Convert to schema-compatible formats
+            fundamental_freq = FrequencyRange(
+                min_hz=float(np.min(pitch_features.fundamental_frequency[pitch_features.fundamental_frequency > 0])) if len(pitch_features.fundamental_frequency[pitch_features.fundamental_frequency > 0]) > 0 else 0.0,
+                max_hz=float(np.max(pitch_features.fundamental_frequency[pitch_features.fundamental_frequency > 0])) if len(pitch_features.fundamental_frequency[pitch_features.fundamental_frequency > 0]) > 0 else 0.0,
+                mean_hz=float(np.mean(pitch_features.fundamental_frequency[pitch_features.fundamental_frequency > 0])) if len(pitch_features.fundamental_frequency[pitch_features.fundamental_frequency > 0]) > 0 else 0.0,
+                std_hz=float(np.std(pitch_features.fundamental_frequency[pitch_features.fundamental_frequency > 0])) if len(pitch_features.fundamental_frequency[pitch_features.fundamental_frequency > 0]) > 0 else 0.0
+            )
+            
+            # Create prosody features schema
+            prosody_schema = ProsodyFeaturesSchema(
+                speech_rate=prosodic_features.syllable_timing.get('syllable_rate', 0.0),
+                pause_frequency=prosodic_features.pause_patterns.get('pause_frequency', 0.0),
+                emphasis_variance=prosodic_features.rhythm_patterns.get('rhythm_regularity', 0.0),
+                pitch_range_semitones=pitch_features.pitch_range_semitones,
+                pitch_contour_complexity=pitch_features.pitch_trajectory_complexity,
+                pitch_contour=pitch_features.pitch_contour.tolist() if len(pitch_features.pitch_contour) > 0 else [],
+                energy_contour=[],  # Will be filled by legacy method if needed
+                syllable_duration_mean=prosodic_features.syllable_timing.get('mean_syllable_duration', 0.0),
+                syllable_duration_std=prosodic_features.syllable_timing.get('syllable_duration_variance', 0.0),
+                pause_duration_mean=prosodic_features.pause_patterns.get('mean_pause_duration', 0.0),
+                pause_duration_std=prosodic_features.pause_patterns.get('pause_duration_variance', 0.0),
+                stress_pattern_entropy=0.0,  # Could be calculated from stress patterns
+                primary_stress_ratio=np.mean(prosodic_features.stress_patterns) if len(prosodic_features.stress_patterns) > 0 else 0.0,
+                declination_slope=np.mean(prosodic_features.declination_patterns) if len(prosodic_features.declination_patterns) > 0 else 0.0,
+                excitement_score=emotional_features.emotional_dimensions.get('arousal', 0.0),
+                calmness_score=1.0 - emotional_features.emotional_dimensions.get('arousal', 0.0),
+                confidence_score=emotional_features.confidence_measures.get('overall_confidence', 0.0),
+                timing_features=prosodic_features.syllable_timing
+            )
+            
+            # Create emotional profile schema
+            emotional_schema = EmotionalProfileSchema(
+                valence=emotional_features.emotional_dimensions.get('valence', 0.0),
+                arousal=emotional_features.emotional_dimensions.get('arousal', 0.0),
+                dominance=emotional_features.emotional_dimensions.get('dominance', 0.0),
+                happiness_score=emotional_features.emotional_dimensions.get('happiness', 0.0),
+                sadness_score=emotional_features.emotional_dimensions.get('sadness', 0.0),
+                anger_score=emotional_features.emotional_dimensions.get('anger', 0.0),
+                fear_score=emotional_features.emotional_dimensions.get('fear', 0.0),
+                surprise_score=emotional_features.emotional_dimensions.get('surprise', 0.0),
+                disgust_score=emotional_features.emotional_dimensions.get('disgust', 0.0),
+                breathiness=emotional_features.voice_quality_measures.get('breathiness', 0.0),
+                roughness=emotional_features.voice_quality_measures.get('roughness', 0.0),
+                strain=emotional_features.voice_quality_measures.get('strain', 0.0),
+                analysis_reliability=0.95  # High reliability for multi-dimensional analysis
+            )
+            
+            # Create voice profile with comprehensive features
+            voice_profile = VoiceProfileSchema(
+                id="temp_id",
+                reference_audio_id="temp_ref_id",
+                fundamental_frequency=fundamental_freq,
+                formant_frequencies=np.mean(formant_features.formant_frequencies, axis=0).tolist() if len(formant_features.formant_frequencies) > 0 else [],
+                spectral_centroid_mean=float(np.mean(timbre_features.spectral_centroid)),
+                spectral_rolloff_mean=float(np.mean(timbre_features.spectral_rolloff)),
+                spectral_bandwidth_mean=0.0,  # Not directly available, could be calculated
+                zero_crossing_rate_mean=0.0,  # Not directly available, could be calculated
+                mfcc_features=timbre_features.mfcc_coefficients.tolist(),
+                speech_rate=prosody_schema.speech_rate,
+                pause_frequency=prosody_schema.pause_frequency,
+                emphasis_variance=prosody_schema.emphasis_variance,
+                energy_mean=0.0,  # Could be calculated from timbre features
+                energy_variance=0.0,  # Could be calculated from timbre features
+                pitch_variance=fundamental_freq.std_hz,
+                signal_to_noise_ratio=quality_metrics.signal_to_noise_ratio,
+                voice_activity_ratio=quality_metrics.voice_activity_ratio,
+                quality_score=quality_metrics.overall_quality,
+                analysis_duration=comprehensive_analysis['audio_metadata']['duration'],
+                sample_rate=comprehensive_analysis['audio_metadata']['sample_rate'],
+                total_frames=comprehensive_analysis['audio_metadata']['total_samples'],
+                created_at=datetime.now()
+            )
+            
+            # Create voice characteristics
+            voice_characteristics = VoiceCharacteristics(
+                timbre_features={
+                    'brightness': timbre_features.brightness_measure,
+                    'warmth': timbre_features.warmth_measure,
+                    'breathiness': timbre_features.breathiness_measure,
+                    'roughness': timbre_features.roughness_measure,
+                    'nasality': timbre_features.nasality_measure,
+                    'spectral_centroid': float(np.mean(timbre_features.spectral_centroid)),
+                    'spectral_rolloff': float(np.mean(timbre_features.spectral_rolloff)),
+                    **timbre_features.resonance_characteristics
+                },
+                pitch_characteristics=fundamental_freq,
+                prosody_features=prosody_schema,
+                emotional_markers=emotional_schema,
+                quality_metrics=quality_metrics
+            )
+            
+            processing_time = time.time() - start_time
+            
+            # Enhanced analysis metadata including fingerprint info
+            analysis_metadata = {
+                "audio_duration": comprehensive_analysis['audio_metadata']['duration'],
+                "sample_rate": comprehensive_analysis['audio_metadata']['sample_rate'],
+                "total_frames": comprehensive_analysis['audio_metadata']['total_samples'],
+                "hop_length": self.multi_dimensional_analyzer.hop_length,
+                "n_fft": self.multi_dimensional_analyzer.n_fft,
+                "analysis_version": "2.0_multidimensional",
+                "voice_fingerprint_features": voice_fingerprint.get('_total_features', 0),
+                "fingerprint_version": voice_fingerprint.get('_fingerprint_version', '1.0'),
+                "advanced_features": {
+                    "pitch_jitter": pitch_features.jitter,
+                    "pitch_shimmer": pitch_features.shimmer,
+                    "harmonics_to_noise_ratio": pitch_features.harmonics_to_noise_ratio,
+                    "vowel_space_area": formant_features.vowel_space_area,
+                    "formant_dispersion": formant_features.formant_dispersion,
+                    "personality_extraversion": emotional_features.personality_indicators.get('extraversion', 0.0),
+                    "personality_neuroticism": emotional_features.personality_indicators.get('neuroticism', 0.0),
+                    "speaking_style_confidence": emotional_features.speaking_style_markers.get('confidence', 0.0),
+                    "speaking_style_formality": emotional_features.speaking_style_markers.get('formality', 0.0)
+                }
+            }
+            
+            # End performance monitoring
+            performance_monitor.end_operation(
+                operation_id, 
+                success=True,
+                additional_metadata={
+                    'audio_duration': comprehensive_analysis['audio_metadata']['duration'],
+                    'processing_time': processing_time,
+                    'quality_score': quality_metrics.overall_quality,
+                    'fingerprint_features': voice_fingerprint.get('_total_features', 0)
+                }
+            )
+            
+            return VoiceAnalysisResult(
+                voice_profile=voice_profile,
+                voice_characteristics=voice_characteristics,
+                prosody_features=prosody_schema,
+                emotional_profile=emotional_schema,
+                processing_time=processing_time,
+                analysis_metadata=analysis_metadata
+            )
+            
+        except Exception as e:
+            # End performance monitoring with error
+            performance_monitor.end_operation(
+                operation_id, 
+                success=False,
+                error_message=str(e)
+            )
+            logger.error(f"Multi-dimensional voice analysis failed for {audio_path}: {str(e)}")
+            raise
         
     def analyze_voice_characteristics(self, audio_path: str) -> VoiceAnalysisResult:
         """
