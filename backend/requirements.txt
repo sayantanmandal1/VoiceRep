@@ -20,11 +20,11 @@ scipy==1.11.4
 numpy==1.24.3
 
 # Machine Learning / AI - ESSENTIAL
-torch==2.0.1
-torchaudio==2.0.2
+torch>=2.0.0
+torchaudio>=2.0.0
 
 # TTS and Voice Cloning - CORE FUNCTIONALITY
-TTS==0.22.0
+TTS>=0.24.0
 
 # Audio processing utilities
 ffmpeg-python==0.2.0

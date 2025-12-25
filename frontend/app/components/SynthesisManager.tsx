@@ -418,17 +418,17 @@ export default function SynthesisManager({
     }
   };
 
-  // Auto-start synthesis when both file and text are ready
-  useEffect(() => {
-    if (uploadedFile && validatedText && !synthesisTask && !isProcessing) {
-      // Small delay to ensure UI is ready
-      const timer = setTimeout(() => {
-        startSynthesis();
-      }, 500);
+  // Auto-start synthesis when both file and text are ready - DISABLED for manual control
+  // useEffect(() => {
+  //   if (uploadedFile && validatedText && !synthesisTask && !isProcessing) {
+  //     // Small delay to ensure UI is ready
+  //     const timer = setTimeout(() => {
+  //       startSynthesis();
+  //     }, 500);
       
-      return () => clearTimeout(timer);
-    }
-  }, [uploadedFile, validatedText, synthesisTask, isProcessing, startSynthesis]);
+  //     return () => clearTimeout(timer);
+  //   }
+  // }, [uploadedFile, validatedText, synthesisTask, isProcessing, startSynthesis]);
 
   // Don't render if missing required data
   if (!uploadedFile || !validatedText) {
@@ -440,6 +440,42 @@ export default function SynthesisManager({
       <h2 className="text-2xl font-semibold text-gray-900 dark:text-white mb-6">
         Step 3: Voice Synthesis
       </h2>
+
+      {/* Manual Synthesis Trigger Button */}
+      {!isProcessing && !synthesisResult && (
+        <div className="mb-6 p-6 bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-900/20 dark:to-indigo-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
+          <div className="text-center">
+            <div className="mb-4">
+              <div className="w-16 h-16 bg-blue-100 dark:bg-blue-900 rounded-full flex items-center justify-center mx-auto mb-4">
+                <svg className="w-8 h-8 text-blue-600 dark:text-blue-400" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M9.383 3.076A1 1 0 0110 4v12a1 1 0 01-1.617.816L4.5 13.5H2a1 1 0 01-1-1V7.5a1 1 0 011-1h2.5l3.883-3.316a1 1 0 011.617.816zM14.657 2.929a1 1 0 011.414 0A9.972 9.972 0 0119 10a9.972 9.972 0 01-2.929 7.071 1 1 0 01-1.414-1.414A7.971 7.971 0 0017 10c0-2.21-.894-4.208-2.343-5.657a1 1 0 010-1.414zm-2.829 2.828a1 1 0 011.415 0A5.983 5.983 0 0115 10a5.983 5.983 0 01-1.757 4.243 1 1 0 01-1.415-1.415A3.984 3.984 0 0013 10a3.984 3.984 0 00-1.172-2.828 1 1 0 010-1.415z" clipRule="evenodd" />
+                </svg>
+              </div>
+              <h3 className="text-xl font-semibold text-gray-900 dark:text-white mb-2">
+                Ready to Generate Your Voice Clone
+              </h3>
+              <p className="text-gray-600 dark:text-gray-400 mb-6 max-w-md mx-auto">
+                Your audio file and text have been processed. Click the button below to start the voice synthesis process and create your personalized synthetic voice.
+              </p>
+            </div>
+            
+            <button
+              onClick={startSynthesis}
+              disabled={isProcessing}
+              className="inline-flex items-center px-8 py-4 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 disabled:from-gray-400 disabled:to-gray-500 text-white font-semibold rounded-lg shadow-lg hover:shadow-xl transform hover:scale-105 transition-all duration-200 disabled:cursor-not-allowed disabled:transform-none"
+            >
+              <svg className="w-6 h-6 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 14.142M9 9a3 3 0 000 6v-6a3 3 0 000-6zm0 0V7a2 2 0 012-2h4a2 2 0 012 2v2M9 9a3 3 0 000 6v-6a3 3 0 000-6z" />
+              </svg>
+              {isProcessing ? 'Generating Voice...' : 'Generate Synthetic Voice'}
+            </button>
+            
+            <div className="mt-4 text-sm text-gray-500 dark:text-gray-400">
+              <p>This process typically takes 30-60 seconds</p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Comprehensive Progress Bar */}
       {showProgress && (

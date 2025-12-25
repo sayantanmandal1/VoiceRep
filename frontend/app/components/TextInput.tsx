@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
-import axios from 'axios';
+import { apiClient, TextValidationResponse } from '../lib/api';
 
 interface TextInputProps {
   onTextValidated?: (textData: any) => void;
@@ -67,18 +67,13 @@ export default function TextInput({
     setTextState(prev => ({ ...prev, isValidating: true }));
 
     try {
-      const response = await axios.post<ValidationResponse>(
-        'http://localhost:8000/api/v1/text/validate',
-        { text }
-      );
-
-      const validationResult = response.data;
+      const validationResult = await apiClient.validateText(text);
       
       setTextState(prev => ({
         ...prev,
         isValid: validationResult.is_valid,
         characterCount: validationResult.character_count,
-        validationErrors: validationResult.validation_errors || [],
+        validationErrors: validationResult.error_message ? [validationResult.error_message] : [],
         detectedLanguage: validationResult.detected_language,
         languageConfidence: validationResult.language_confidence,
         isValidating: false

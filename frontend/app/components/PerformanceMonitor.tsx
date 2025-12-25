@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from 'react';
-import axios from 'axios';
+import { apiClient } from '../lib/api';
 
 interface PerformanceMetrics {
   total_operations: number;
@@ -53,16 +53,46 @@ export default function PerformanceMonitor({
 
   const fetchMetrics = async () => {
     try {
-      const [metricsResponse, queueResponse] = await Promise.all([
-        axios.get('http://localhost:8000/api/v1/performance/metrics/summary'),
-        axios.get('http://localhost:8000/api/v1/performance/queue/status')
-      ]);
-
-      setMetrics(metricsResponse.data.data);
-      setQueueStatus(queueResponse.data.data);
+      const metrics = await apiClient.getPerformanceMetrics();
+      
+      // Map the API response to our interface
+      setMetrics({
+        total_operations: 0, // Not available in current API
+        overall_success_rate: 0, // Not available in current API
+        active_operations: metrics.active_tasks,
+        current_resources: {
+          cpu_percent: 0, // Not available in current API
+          memory_percent: metrics.memory_usage,
+          memory_available_mb: 0, // Not available in current API
+          active_tasks: metrics.active_tasks,
+          queue_length: metrics.queue_length,
+        },
+        threshold_compliance: {
+          success_rate_ok: true,
+          cpu_usage_ok: true,
+          memory_usage_ok: metrics.memory_usage < 80,
+          queue_size_ok: metrics.queue_length < 10,
+        },
+        monitoring_active: true
+      });
+      
+      setQueueStatus({
+        queue_sizes: {
+          high: 0,
+          normal: metrics.queue_length,
+          low: 0,
+        },
+        total_queue_size: metrics.queue_length,
+        estimated_wait_times: {
+          high: 0,
+          normal: metrics.processing_time,
+          low: 0,
+        }
+      });
+      
       setError('');
     } catch (err: any) {
-      setError(err.response?.data?.detail || 'Failed to fetch performance metrics');
+      setError(err.message || 'Failed to fetch performance metrics');
     } finally {
       setIsLoading(false);
     }

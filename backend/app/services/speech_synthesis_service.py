@@ -10,51 +10,14 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any, Tuple
 from scipy.io import wavfile
 
-# Optional imports with fallbacks
-try:
-    import torch
-    import torchaudio
-    TORCH_AVAILABLE = True
-except ImportError:
-    TORCH_AVAILABLE = False
-    torch = None
-    torchaudio = None
-
-try:
-    import librosa
-    LIBROSA_AVAILABLE = True
-except ImportError:
-    LIBROSA_AVAILABLE = False
-    librosa = None
-
-try:
-    import soundfile as sf
-    SOUNDFILE_AVAILABLE = True
-except ImportError:
-    SOUNDFILE_AVAILABLE = False
-    sf = None
-
-try:
-    from langdetect import detect
-    LANGDETECT_AVAILABLE = True
-except ImportError:
-    LANGDETECT_AVAILABLE = False
-    detect = None
-
-try:
-    from scipy.signal import resample
-    SCIPY_AVAILABLE = True
-except ImportError:
-    SCIPY_AVAILABLE = False
-    resample = None
-
-# Try to import TTS, fall back to mock if not available
-try:
-    from TTS.api import TTS
-    TTS_AVAILABLE = True
-except ImportError:
-    TTS_AVAILABLE = False
-    TTS = None
+# Required imports - no fallbacks
+import torch
+import torchaudio
+import librosa
+import soundfile as sf
+from langdetect import detect
+from scipy.signal import resample
+from TTS.api import TTS
 
 from app.schemas.voice import VoiceModelSchema, VoiceProfileSchema
 from app.core.config import settings
@@ -69,45 +32,16 @@ class SpeechSynthesizer:
     
     def __init__(self):
         self.sample_rate = 22050  # Standard sample rate for synthesis
-        if TORCH_AVAILABLE:
-            self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        else:
-            self.device = "cpu"  # Fallback
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.models_cache = {}  # Cache for loaded models
         self._ensure_directories()
         
-        # Check for required dependencies
-        self._check_dependencies()
+        logger.info(f"Speech synthesizer initialized with device: {self.device}")
         
     def _ensure_directories(self) -> None:
         """Ensure required directories exist."""
         for directory in [settings.RESULTS_DIR, settings.MODELS_DIR]:
             Path(directory).mkdir(parents=True, exist_ok=True)
-    
-    def _check_dependencies(self) -> None:
-        """Check for required dependencies and log warnings."""
-        missing_deps = []
-        
-        if not TORCH_AVAILABLE:
-            missing_deps.append("torch")
-        if not LIBROSA_AVAILABLE:
-            missing_deps.append("librosa")
-        if not SOUNDFILE_AVAILABLE:
-            missing_deps.append("soundfile")
-        if not LANGDETECT_AVAILABLE:
-            missing_deps.append("langdetect")
-        if not SCIPY_AVAILABLE:
-            missing_deps.append("scipy")
-        if not TTS_AVAILABLE:
-            missing_deps.append("TTS")
-        
-        if missing_deps:
-            logger.warning(f"Missing optional dependencies: {', '.join(missing_deps)}. Using mock TTS service for development.")
-    
-    def _is_available(self) -> bool:
-        """Check if synthesis service is available with required dependencies."""
-        # Can work with mock service even without all dependencies
-        return True
     
     def synthesize_speech(
         self, 
@@ -137,12 +71,7 @@ class SpeechSynthesizer:
             if progress_callback:
                 progress_callback(5, "Preparing synthesis")
             
-            # Use real TTS service
-            if not TTS_AVAILABLE:
-                logger.error("TTS library not available. Please install with: pip install TTS")
-                return False, None, {"error": "TTS library not available"}
-            
-            # Use real voice synthesis service
+            # Use real TTS service - no fallbacks
             logger.info("Using real TTS service for voice synthesis")
             return await self._synthesize_with_real_tts(
                 text, voice_model, language, voice_settings, 
@@ -295,9 +224,6 @@ class SpeechSynthesizer:
     
     def _detect_language(self, text: str) -> str:
         """Detect language of input text."""
-        if not LANGDETECT_AVAILABLE:
-            return 'english'  # Default fallback when langdetect not available
-            
         try:
             detected = detect(text)
             # Map common language codes
@@ -314,8 +240,9 @@ class SpeechSynthesizer:
                 'zh': 'chinese'
             }
             return language_map.get(detected, 'english')
-        except:
-            return 'english'  # Default fallback
+        except Exception as e:
+            logger.error(f"Language detection failed: {e}")
+            raise RuntimeError(f"Language detection failed: {e}")
     
     def _validate_text_input(self, text: str) -> bool:
         """Validate text input for synthesis."""
@@ -514,10 +441,6 @@ class SpeechSynthesizer:
     
     def _apply_pitch_shift(self, audio: np.ndarray, semitones: float) -> np.ndarray:
         """Apply pitch shifting to audio."""
-        if not LIBROSA_AVAILABLE:
-            logger.warning("librosa not available, skipping pitch shift")
-            return audio
-            
         try:
             # Use librosa for pitch shifting
             return librosa.effects.pitch_shift(
@@ -525,20 +448,18 @@ class SpeechSynthesizer:
                 sr=self.sample_rate, 
                 n_steps=semitones
             )
-        except:
-            return audio  # Return original if pitch shift fails
+        except Exception as e:
+            logger.error(f"Pitch shift failed: {e}")
+            raise RuntimeError(f"Pitch shift failed: {e}")
     
     def _apply_speed_change(self, audio: np.ndarray, factor: float) -> np.ndarray:
         """Apply speed change to audio."""
-        if not LIBROSA_AVAILABLE:
-            logger.warning("librosa not available, skipping speed change")
-            return audio
-            
         try:
             # Use librosa for time stretching
             return librosa.effects.time_stretch(audio, rate=factor)
-        except:
-            return audio  # Return original if speed change fails
+        except Exception as e:
+            logger.error(f"Speed change failed: {e}")
+            raise RuntimeError(f"Speed change failed: {e}")
     
     def _apply_emotion_modification(self, audio: np.ndarray, intensity: float) -> np.ndarray:
         """Apply emotional intensity modification."""
@@ -602,9 +523,6 @@ class SpeechSynthesizer:
     
     def _reduce_noise(self, audio: np.ndarray) -> np.ndarray:
         """Apply basic noise reduction."""
-        if not LIBROSA_AVAILABLE:
-            return audio
-            
         try:
             # Simple spectral gating for noise reduction
             stft = librosa.stft(audio)
@@ -619,8 +537,9 @@ class SpeechSynthesizer:
             
             # Reconstruct audio
             return librosa.istft(stft_cleaned)
-        except:
-            return audio
+        except Exception as e:
+            logger.error(f"Noise reduction failed: {e}")
+            raise RuntimeError(f"Noise reduction failed: {e}")
     
     def _apply_compression(self, audio: np.ndarray) -> np.ndarray:
         """Apply gentle dynamic range compression."""
@@ -666,13 +585,7 @@ class SpeechSynthesizer:
                 audio = audio.astype(np.float32)
             
             # Save as WAV file
-            if SOUNDFILE_AVAILABLE:
-                sf.write(output_path, audio, self.sample_rate)
-            else:
-                # Fallback to scipy.io.wavfile
-                # Convert to 16-bit PCM
-                audio_int16 = (audio * 32767).astype(np.int16)
-                wavfile.write(output_path, self.sample_rate, audio_int16)
+            sf.write(output_path, audio, self.sample_rate)
             
             return output_path
             
@@ -695,19 +608,19 @@ class SpeechSynthesizer:
                 "estimated_quality": min(1.0, rms_energy * 2)  # Simple quality estimate
             }
             
-            # Calculate spectral metrics if librosa is available
-            if LIBROSA_AVAILABLE:
-                try:
-                    stft = librosa.stft(audio)
-                    spectral_centroid = np.mean(librosa.feature.spectral_centroid(S=np.abs(stft)))
-                    spectral_rolloff = np.mean(librosa.feature.spectral_rolloff(S=np.abs(stft)))
-                    
-                    quality_metrics.update({
-                        "spectral_centroid": float(spectral_centroid),
-                        "spectral_rolloff": float(spectral_rolloff)
-                    })
-                except:
-                    pass  # Skip spectral analysis if it fails
+            # Calculate spectral metrics
+            try:
+                stft = librosa.stft(audio)
+                spectral_centroid = np.mean(librosa.feature.spectral_centroid(S=np.abs(stft)))
+                spectral_rolloff = np.mean(librosa.feature.spectral_rolloff(S=np.abs(stft)))
+                
+                quality_metrics.update({
+                    "spectral_centroid": float(spectral_centroid),
+                    "spectral_rolloff": float(spectral_rolloff)
+                })
+            except Exception as e:
+                logger.error(f"Spectral analysis failed: {e}")
+                raise RuntimeError(f"Spectral analysis failed: {e}")
             
             return quality_metrics
             
