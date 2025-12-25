@@ -23,11 +23,15 @@ numpy==1.24.3
 scikit-learn==1.3.2
 
 # Machine Learning / AI - ESSENTIAL for voice cloning
-torch>=2.0.0
-torchaudio>=2.0.0
+torch>=2.0.0,<2.2.0
+torchaudio>=2.0.0,<2.2.0
 
 # Advanced TTS and Voice Cloning - CORE FUNCTIONALITY
-TTS>=0.24.0
+# Pin to compatible version that works with current transformers
+TTS==0.22.0
+
+# Transformers - pin to compatible version
+transformers>=4.21.0,<4.36.0
 
 # Additional voice processing libraries
 pyworld==0.3.4
@@ -49,8 +53,8 @@ python-dotenv==1.0.0
 # Progress tracking
 tqdm==4.66.1
 
-# CORS
-fastapi-cors==0.0.6
+# CORS - use standard fastapi cors
+# fastapi-cors==0.0.6  # Removed - use fastapi.middleware.cors instead
 
 # Session management
 itsdangerous==2.1.2
@@ -62,10 +66,10 @@ python-magic==0.4.27
 orjson==3.9.10
 
 # Additional FastAPI utilities
-fastapi-limiter==0.1.6
+# fastapi-limiter==0.1.6  # Removed - implement custom rate limiting
 
 # Health checks
-healthcheck==1.3.3
+# healthcheck==1.3.3  # Removed - implement custom health checks
 
 # File validation
 filetype==1.2.0

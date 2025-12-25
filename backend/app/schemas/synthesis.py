@@ -24,7 +24,7 @@ class VoiceSettings(BaseModel):
     volume_gain: float = Field(default=0.0, ge=-20.0, le=20.0, description="Volume gain in dB")
     
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "pitch_shift": 0.0,
                 "speed_factor": 1.0,
@@ -44,7 +44,7 @@ class SynthesisRequest(BaseModel):
     quality: str = Field(default="high", pattern="^(low|medium|high|ultra)$", description="Output quality preset")
     
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "text": "Hello, this is a test of voice synthesis.",
                 "voice_model_id": "voice_model_123",
@@ -70,7 +70,7 @@ class CrossLanguageSynthesisRequest(BaseModel):
     output_format: str = Field(default="wav", pattern="^(wav|mp3|flac)$", description="Output audio format")
     
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "text": "Bonjour, comment allez-vous?",
                 "source_voice_model_id": "voice_model_123",
@@ -89,7 +89,7 @@ class BatchSynthesisRequest(BaseModel):
     priority: int = Field(default=5, ge=1, le=10, description="Batch priority (1=highest, 10=lowest)")
     
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "requests": [
                     {

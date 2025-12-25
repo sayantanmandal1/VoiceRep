@@ -12,6 +12,13 @@ import numpy as np
 from datetime import datetime
 import json
 import shutil
+import warnings
+
+# Suppress specific warnings
+warnings.filterwarnings("ignore", message="Valid config keys have changed in V2")
+warnings.filterwarnings("ignore", message="pkg_resources is deprecated")
+warnings.filterwarnings("ignore", category=UserWarning, module="pydantic")
+warnings.filterwarnings("ignore", category=UserWarning, module="jieba")
 
 # Required audio processing libraries
 import librosa
@@ -36,6 +43,20 @@ except ImportError:
         torch.nn.utils.parametrizations.weight_norm = weight_norm
     except ImportError:
         pass
+
+# Handle transformers compatibility issues
+try:
+    from transformers import BeamSearchScorer
+except ImportError:
+    # Create a dummy BeamSearchScorer if not available
+    class BeamSearchScorer:
+        def __init__(self, *args, **kwargs):
+            pass
+    
+    # Monkey patch it into transformers
+    import sys
+    if 'transformers' in sys.modules:
+        sys.modules['transformers'].BeamSearchScorer = BeamSearchScorer
 
 from TTS.api import TTS
 
@@ -101,27 +122,41 @@ class AdvancedVoiceCloningService:
             
             logger.info("Loading advanced voice cloning models...")
             
-            # Try to load XTTS v2 first (highest quality)
+            # Try to load XTTS v2 first (highest quality) with better error handling
             if progress_callback:
                 progress_callback(20, "Loading XTTS v2 (highest quality voice cloning)")
             
             try:
+                # Set environment variable to suppress TTS warnings
+                os.environ['TTS_CACHE'] = str(self.models_dir)
+                
                 self.xtts_model = TTS(model_name=self.model_configs["xtts_v2"]["name"], progress_bar=False)
                 logger.info("Successfully loaded XTTS v2 model for advanced voice cloning")
                 self.voice_clone_model = self.xtts_model
                 self.tts_model = self.xtts_model  # Set main TTS model reference
             except Exception as e:
                 logger.warning(f"XTTS v2 model failed to load: {e}")
+                self.xtts_model = None
             
-            # Try Bark model as alternative (very high quality)
+            # Try Bark model as alternative (very high quality) with timeout
             if not self.voice_clone_model:
                 if progress_callback:
                     progress_callback(40, "Loading Bark model (alternative high-quality)")
                 
                 try:
-                    self.voice_clone_model = TTS(model_name=self.model_configs["bark"]["name"], progress_bar=False)
-                    self.tts_model = self.voice_clone_model  # Set main TTS model reference
-                    logger.info("Successfully loaded Bark model for voice cloning")
+                    # Set a timeout for model loading to prevent hanging
+                    bark_task = asyncio.create_task(
+                        asyncio.to_thread(TTS, model_name=self.model_configs["bark"]["name"], progress_bar=False)
+                    )
+                    
+                    try:
+                        self.voice_clone_model = await asyncio.wait_for(bark_task, timeout=300)  # 5 minute timeout
+                        self.tts_model = self.voice_clone_model
+                        logger.info("Successfully loaded Bark model for voice cloning")
+                    except asyncio.TimeoutError:
+                        bark_task.cancel()
+                        logger.warning("Bark model loading timed out")
+                        
                 except Exception as e:
                     logger.warning(f"Bark model failed to load: {e}")
             
@@ -177,18 +212,23 @@ class AdvancedVoiceCloningService:
                             'top_p': 0.8
                         })
                     
-                    # Enable voice matching features
+                    # Enable voice matching features - handle missing keys gracefully
                     if hasattr(model.config, 'model_args'):
-                        model.config.model_args.update({
-                            'use_speaker_embedding': True,
-                            'use_capacitron_vae': True if hasattr(model.config.model_args, 'use_capacitron_vae') else False,
-                            'capacitron_vae_loss_alpha': 0.25
-                        })
+                        # Only update keys that exist
+                        if hasattr(model.config.model_args, 'use_speaker_embedding'):
+                            model.config.model_args.use_speaker_embedding = True
+                        
+                        # Check for capacitron_vae key before using it
+                        if hasattr(model.config.model_args, 'use_capacitron_vae'):
+                            model.config.model_args.use_capacitron_vae = True
+                            if hasattr(model.config.model_args, 'capacitron_vae_loss_alpha'):
+                                model.config.model_args.capacitron_vae_loss_alpha = 0.25
             
             logger.info("Model configured for exact voice replication")
             
         except Exception as e:
             logger.warning(f"Could not optimize model configuration: {e}")
+            # Continue without optimization rather than failing
     
     async def preprocess_reference_audio(
         self, 
