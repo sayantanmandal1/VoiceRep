@@ -256,7 +256,7 @@ class BatchSynthesisResult(BaseModel):
     completed_at: Optional[datetime] = Field(None, description="Batch completion timestamp")
     
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "batch_id": "batch_123",
                 "status": "completed",
