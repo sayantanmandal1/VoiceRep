@@ -15,6 +15,8 @@ from scipy.io import wavfile
 from app.core.celery_app import celery_app
 from app.core.config import settings
 from app.models.file import ProcessingStatus
+from app.services.advanced_audio_preprocessing import AdvancedAudioPreprocessor
+from app.services.audio_quality_assessment import audio_quality_assessor
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -38,6 +40,8 @@ class AudioExtractionService:
     def __init__(self):
         """Initialize audio extraction service."""
         self._ensure_directories()
+        # Initialize advanced preprocessing engine
+        self.advanced_preprocessor = AdvancedAudioPreprocessor(target_sample_rate=22050)
     
     def _ensure_directories(self) -> None:
         """Ensure required directories exist."""
@@ -215,6 +219,159 @@ class AudioExtractionService:
             logger.error(error_msg)
             return False, error_msg, {}
     
+    def preprocess_audio_advanced(
+        self, 
+        audio_path: str, 
+        output_path: str,
+        progress_callback: Optional[callable] = None
+    ) -> Tuple[bool, Optional[str], Dict[str, Any]]:
+        """
+        Apply advanced audio preprocessing for optimal voice cloning.
+        
+        Args:
+            audio_path: Path to input audio file
+            output_path: Path for preprocessed output
+            progress_callback: Optional callback for progress updates
+            
+        Returns:
+            Tuple of (success, error_message, preprocessing_metadata)
+        """
+        try:
+            if progress_callback:
+                progress_callback(10, "Starting advanced preprocessing")
+            
+            # Initial quality assessment
+            y_initial, sr_initial = librosa.load(audio_path, sr=None, mono=True)
+            initial_assessment = audio_quality_assessor.assess_audio_quality(y_initial, sr_initial, audio_path)
+            
+            if progress_callback:
+                progress_callback(20, f"Initial quality: {initial_assessment.overall_score:.2f}")
+            
+            # Apply advanced preprocessing
+            if progress_callback:
+                progress_callback(30, "Applying spectral enhancement")
+            
+            processed_audio = self.advanced_preprocessor.preprocess_audio(
+                audio_path, 
+                preserve_characteristics=True
+            )
+            
+            if progress_callback:
+                progress_callback(70, "Preprocessing complete, saving output")
+            
+            # Ensure output directory exists
+            Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+            
+            # Save processed audio
+            # Convert to 16-bit PCM for compatibility
+            audio_int16 = (processed_audio.audio_data * 32767).astype(np.int16)
+            wavfile.write(output_path, processed_audio.sample_rate, audio_int16)
+            
+            if progress_callback:
+                progress_callback(90, "Validating processed audio")
+            
+            # Final quality assessment
+            final_assessment = audio_quality_assessor.assess_audio_quality(
+                processed_audio.audio_data, 
+                processed_audio.sample_rate
+            )
+            
+            if progress_callback:
+                progress_callback(100, f"Final quality: {final_assessment.overall_score:.2f}")
+            
+            # Compile metadata
+            preprocessing_metadata = {
+                'initial_quality': {
+                    'overall_score': initial_assessment.overall_score,
+                    'voice_suitability': initial_assessment.voice_suitability_score,
+                    'issues_count': len(initial_assessment.issues_detected)
+                },
+                'final_quality': {
+                    'overall_score': final_assessment.overall_score,
+                    'voice_suitability': final_assessment.voice_suitability_score,
+                    'issues_count': len(final_assessment.issues_detected)
+                },
+                'processing_applied': processed_audio.enhancement_applied,
+                'quality_improvement': final_assessment.overall_score - initial_assessment.overall_score,
+                'spectral_analysis': processed_audio.spectral_analysis,
+                'noise_level': processed_audio.noise_level,
+                'dynamic_range': processed_audio.dynamic_range,
+                'frequency_response': processed_audio.frequency_response,
+                'recommendations': [
+                    {
+                        'type': rec.enhancement_type,
+                        'priority': rec.priority,
+                        'description': rec.description,
+                        'expected_improvement': rec.expected_improvement
+                    }
+                    for rec in final_assessment.enhancement_recommendations
+                ]
+            }
+            
+            logger.info(f"Advanced preprocessing complete. Quality improved: "
+                       f"{initial_assessment.overall_score:.3f} -> {final_assessment.overall_score:.3f}")
+            
+            return True, None, preprocessing_metadata
+            
+        except Exception as e:
+            error_msg = f"Advanced preprocessing failed: {str(e)}"
+            logger.error(error_msg)
+            return False, error_msg, {}
+    
+    def assess_audio_quality_detailed(self, audio_path: str) -> Dict[str, Any]:
+        """
+        Perform detailed audio quality assessment.
+        
+        Args:
+            audio_path: Path to audio file
+            
+        Returns:
+            Detailed quality assessment results
+        """
+        try:
+            # Load audio
+            y, sr = librosa.load(audio_path, sr=None, mono=True)
+            
+            # Perform assessment
+            assessment = audio_quality_assessor.assess_audio_quality(y, sr, audio_path)
+            
+            # Convert to serializable format
+            return {
+                'overall_score': assessment.overall_score,
+                'voice_suitability_score': assessment.voice_suitability_score,
+                'technical_metrics': assessment.technical_metrics,
+                'issues_detected': [
+                    {
+                        'type': issue.issue_type.value,
+                        'severity': issue.severity,
+                        'description': issue.description,
+                        'recommended_action': issue.recommended_action,
+                        'technical_details': issue.technical_details
+                    }
+                    for issue in assessment.issues_detected
+                ],
+                'enhancement_recommendations': [
+                    {
+                        'type': rec.enhancement_type,
+                        'priority': rec.priority,
+                        'expected_improvement': rec.expected_improvement,
+                        'description': rec.description,
+                        'parameters': rec.parameters,
+                        'prerequisites': rec.prerequisites
+                    }
+                    for rec in assessment.enhancement_recommendations
+                ],
+                'processing_suggestions': assessment.processing_suggestions
+            }
+            
+        except Exception as e:
+            logger.error(f"Quality assessment failed for {audio_path}: {str(e)}")
+            return {
+                'overall_score': 0.0,
+                'voice_suitability_score': 0.0,
+                'error': str(e)
+            }
+    
     def normalize_audio(self, input_path: str, output_path: str) -> Optional[str]:
         """
         Normalize audio levels and remove silence.
@@ -301,6 +458,147 @@ class AudioExtractionService:
 
 # Global service instance
 audio_extraction_service = AudioExtractionService()
+
+
+@celery_app.task(bind=True)
+def preprocess_audio_advanced_task(
+    self, 
+    audio_file_path: str, 
+    output_path: str,
+    file_id: Optional[str] = None
+):
+    """
+    Apply advanced audio preprocessing for optimal voice cloning.
+    
+    Args:
+        audio_file_path: Path to input audio file
+        output_path: Path for preprocessed output
+        file_id: Optional file ID for database updates
+    
+    Returns:
+        dict: Task result with preprocessing metadata
+    """
+    try:
+        # Update task state
+        def update_progress(progress: int, status: str):
+            self.update_state(
+                state='PROGRESS', 
+                meta={
+                    'progress': progress, 
+                    'status': status,
+                    'file_id': file_id
+                }
+            )
+        
+        update_progress(0, 'Starting advanced audio preprocessing')
+        
+        # Apply advanced preprocessing
+        success, error_msg, metadata = audio_extraction_service.preprocess_audio_advanced(
+            audio_file_path, 
+            output_path,
+            progress_callback=update_progress
+        )
+        
+        if not success:
+            self.update_state(
+                state='FAILURE',
+                meta={
+                    'error': error_msg, 
+                    'status': 'Advanced preprocessing failed',
+                    'file_id': file_id
+                }
+            )
+            return {
+                'status': 'FAILURE',
+                'error': error_msg,
+                'file_id': file_id
+            }
+        
+        update_progress(100, 'Advanced preprocessing complete')
+        
+        return {
+            'status': 'SUCCESS',
+            'output_path': output_path,
+            'preprocessing_metadata': metadata,
+            'message': 'Advanced preprocessing completed successfully',
+            'file_id': file_id
+        }
+        
+    except Exception as exc:
+        error_msg = f"Unexpected error in advanced preprocessing task: {str(exc)}"
+        logger.error(error_msg)
+        self.update_state(
+            state='FAILURE',
+            meta={
+                'error': error_msg, 
+                'status': 'Advanced preprocessing failed',
+                'file_id': file_id
+            }
+        )
+        return {
+            'status': 'FAILURE',
+            'error': error_msg,
+            'file_id': file_id
+        }
+
+
+@celery_app.task(bind=True)
+def assess_audio_quality_task(self, audio_file_path: str, file_id: Optional[str] = None):
+    """
+    Perform detailed audio quality assessment.
+    
+    Args:
+        audio_file_path: Path to audio file for assessment
+        file_id: Optional file ID for database updates
+    
+    Returns:
+        dict: Quality assessment results
+    """
+    try:
+        self.update_state(
+            state='PROGRESS', 
+            meta={
+                'progress': 50, 
+                'status': 'Analyzing audio quality',
+                'file_id': file_id
+            }
+        )
+        
+        # Perform quality assessment
+        assessment_results = audio_extraction_service.assess_audio_quality_detailed(audio_file_path)
+        
+        self.update_state(
+            state='PROGRESS', 
+            meta={
+                'progress': 100, 
+                'status': 'Quality assessment complete',
+                'file_id': file_id
+            }
+        )
+        
+        return {
+            'status': 'SUCCESS',
+            'assessment_results': assessment_results,
+            'message': 'Audio quality assessment completed successfully',
+            'file_id': file_id
+        }
+        
+    except Exception as exc:
+        error_msg = f"Quality assessment task failed: {str(exc)}"
+        logger.error(error_msg)
+        self.update_state(
+            state='FAILURE',
+            meta={
+                'error': error_msg, 
+                'status': 'Quality assessment failed',
+                'file_id': file_id
+            }
+        )
+        return {
+            'status': 'FAILURE',
+            'error': error_msg,
+            'file_id': file_id
+        }
 
 
 @celery_app.task(bind=True)

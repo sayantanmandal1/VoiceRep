@@ -4,7 +4,7 @@ Voice analysis API endpoints.
 
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 import os
 import logging
 
@@ -16,6 +16,7 @@ from app.schemas.voice import (
     VoiceModelSchema, VoiceAnalysisResult
 )
 from app.services.voice_analysis_service import VoiceAnalyzer
+from app.tasks.audio_processing import preprocess_audio_advanced_task, assess_audio_quality_task
 from app.core.config import settings
 
 router = APIRouter()
@@ -125,6 +126,160 @@ async def list_voice_profiles(
     """
     profiles = db.query(VoiceProfile).offset(skip).limit(limit).all()
     return profiles
+
+
+@router.post("/preprocess-advanced/{reference_audio_id}")
+async def preprocess_audio_advanced(
+    reference_audio_id: str,
+    db: Session = Depends(get_db)
+):
+    """
+    Apply advanced audio preprocessing for optimal voice cloning.
+    """
+    # Check if reference audio exists
+    reference_audio = db.query(ReferenceAudio).filter(
+        ReferenceAudio.id == reference_audio_id
+    ).first()
+    
+    if not reference_audio:
+        raise HTTPException(status_code=404, detail="Reference audio not found")
+    
+    if not os.path.exists(reference_audio.file_path):
+        raise HTTPException(status_code=404, detail="Audio file not found on disk")
+    
+    # Generate output path for preprocessed audio
+    output_filename = f"preprocessed_{reference_audio.filename}"
+    output_path = os.path.join(os.path.dirname(reference_audio.file_path), output_filename)
+    
+    # Start preprocessing task
+    task = preprocess_audio_advanced_task.delay(
+        reference_audio.file_path,
+        output_path,
+        reference_audio_id
+    )
+    
+    return {
+        "task_id": task.id,
+        "reference_audio_id": reference_audio_id,
+        "status": "processing",
+        "message": "Advanced preprocessing started",
+        "output_path": output_path
+    }
+
+
+@router.get("/preprocess-status/{task_id}")
+async def get_preprocessing_status(task_id: str):
+    """
+    Get status of advanced preprocessing task.
+    """
+    from app.core.celery_app import celery_app
+    
+    task = celery_app.AsyncResult(task_id)
+    
+    if task.state == 'PENDING':
+        response = {
+            'task_id': task_id,
+            'state': task.state,
+            'status': 'Task is waiting to be processed'
+        }
+    elif task.state == 'PROGRESS':
+        response = {
+            'task_id': task_id,
+            'state': task.state,
+            'progress': task.info.get('progress', 0),
+            'status': task.info.get('status', ''),
+            'file_id': task.info.get('file_id', '')
+        }
+    elif task.state == 'SUCCESS':
+        response = {
+            'task_id': task_id,
+            'state': task.state,
+            'result': task.result,
+            'status': 'Preprocessing completed successfully'
+        }
+    else:  # FAILURE
+        response = {
+            'task_id': task_id,
+            'state': task.state,
+            'error': str(task.info),
+            'status': 'Preprocessing failed'
+        }
+    
+    return response
+
+
+@router.post("/assess-quality/{reference_audio_id}")
+async def assess_audio_quality(
+    reference_audio_id: str,
+    db: Session = Depends(get_db)
+):
+    """
+    Perform detailed audio quality assessment.
+    """
+    # Check if reference audio exists
+    reference_audio = db.query(ReferenceAudio).filter(
+        ReferenceAudio.id == reference_audio_id
+    ).first()
+    
+    if not reference_audio:
+        raise HTTPException(status_code=404, detail="Reference audio not found")
+    
+    if not os.path.exists(reference_audio.file_path):
+        raise HTTPException(status_code=404, detail="Audio file not found on disk")
+    
+    # Start quality assessment task
+    task = assess_audio_quality_task.delay(
+        reference_audio.file_path,
+        reference_audio_id
+    )
+    
+    return {
+        "task_id": task.id,
+        "reference_audio_id": reference_audio_id,
+        "status": "processing",
+        "message": "Quality assessment started"
+    }
+
+
+@router.get("/quality-status/{task_id}")
+async def get_quality_assessment_status(task_id: str):
+    """
+    Get status of quality assessment task.
+    """
+    from app.core.celery_app import celery_app
+    
+    task = celery_app.AsyncResult(task_id)
+    
+    if task.state == 'PENDING':
+        response = {
+            'task_id': task_id,
+            'state': task.state,
+            'status': 'Task is waiting to be processed'
+        }
+    elif task.state == 'PROGRESS':
+        response = {
+            'task_id': task_id,
+            'state': task.state,
+            'progress': task.info.get('progress', 0),
+            'status': task.info.get('status', ''),
+            'file_id': task.info.get('file_id', '')
+        }
+    elif task.state == 'SUCCESS':
+        response = {
+            'task_id': task_id,
+            'state': task.state,
+            'result': task.result,
+            'status': 'Quality assessment completed successfully'
+        }
+    else:  # FAILURE
+        response = {
+            'task_id': task_id,
+            'state': task.state,
+            'error': str(task.info),
+            'status': 'Quality assessment failed'
+        }
+    
+    return response
 
 
 @router.delete("/profile/{reference_audio_id}")
