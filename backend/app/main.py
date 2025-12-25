@@ -67,6 +67,7 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down Voice Style Replication API")
     
     try:
+        from app.services.performance_monitoring_service import performance_monitor
         performance_monitor.stop_monitoring()
         logger.info("Performance monitoring stopped")
         

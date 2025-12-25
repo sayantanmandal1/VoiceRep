@@ -32,7 +32,8 @@ class UserSession(BaseModel):
         if not self.session_token:
             self.session_token = secrets.token_urlsafe(32)
         if not self.data_namespace:
-            self.data_namespace = f"session_{self.id}"
+            # Use session_token for namespace since id is not available yet
+            self.data_namespace = f"session_{self.session_token[:8]}"
         if not self.expires_at:
             self.expires_at = datetime.utcnow() + timedelta(hours=24)
     

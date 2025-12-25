@@ -12,7 +12,9 @@
     "test:coverage": "jest --coverage"
   },
   "dependencies": {
+    "@babel/core": "^7.28.5",
     "@hookform/resolvers": "^3.3.2",
+    "@testing-library/dom": "^10.4.1",
     "axios": "^1.13.2",
     "next": "16.0.10",
     "react": "19.2.1",

@@ -111,6 +111,11 @@ class PerformanceMonitor:
             self._monitor_thread.join(timeout=5.0)
         logger.info("Performance monitoring stopped")
     
+    @property
+    def is_running(self) -> bool:
+        """Check if monitoring is currently active."""
+        return self._monitoring_active
+    
     def _monitor_resources(self) -> None:
         """Background thread for monitoring system resources."""
         while self._monitoring_active:
@@ -463,6 +468,46 @@ class QueueManager:
             }
 
 
-# Global service instances
-performance_monitor = PerformanceMonitor()
-queue_manager = QueueManager(performance_monitor)
+class LazyPerformanceMonitor:
+    """Lazy loading wrapper for PerformanceMonitor to avoid blocking imports."""
+    
+    def __init__(self):
+        self._instance = None
+    
+    def __getattr__(self, name):
+        if self._instance is None:
+            self._instance = PerformanceMonitor()
+        return getattr(self._instance, name)
+
+class LazyQueueManager:
+    """Lazy loading wrapper for QueueManager to avoid blocking imports."""
+    
+    def __init__(self):
+        self._instance = None
+    
+    def __getattr__(self, name):
+        if self._instance is None:
+            self._instance = QueueManager(performance_monitor)
+        return getattr(self._instance, name)
+
+# Global service instances with lazy loading
+performance_monitor = LazyPerformanceMonitor()
+queue_manager = LazyQueueManager()
+
+# Keep the getter functions for explicit access
+_performance_monitor = None
+_queue_manager = None
+
+def get_performance_monitor() -> PerformanceMonitor:
+    """Get the global performance monitor instance (lazy initialization)."""
+    global _performance_monitor
+    if _performance_monitor is None:
+        _performance_monitor = PerformanceMonitor()
+    return _performance_monitor
+
+def get_queue_manager() -> QueueManager:
+    """Get the global queue manager instance (lazy initialization)."""
+    global _queue_manager
+    if _queue_manager is None:
+        _queue_manager = QueueManager(get_performance_monitor())
+    return _queue_manager
