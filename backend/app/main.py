@@ -22,6 +22,7 @@ from app.api.v1.api import api_router
 from app.middleware.performance_middleware import setup_performance_middleware
 from app.middleware.session_middleware import setup_session_middleware
 from app.services.cleanup_service import schedule_cleanup_task
+from app.services.real_voice_synthesis_service import initialize_voice_synthesis_service
 
 # Import models to ensure they are registered with Base
 from app.models import (
@@ -54,6 +55,14 @@ async def lifespan(app: FastAPI):
         # Start cleanup task scheduler
         schedule_cleanup_task()
         logger.info("Cleanup task scheduler started")
+        
+        # Initialize real voice synthesis service
+        logger.info("Initializing real voice synthesis service...")
+        voice_service_ready = await initialize_voice_synthesis_service()
+        if voice_service_ready:
+            logger.info("Real voice synthesis service initialized successfully")
+        else:
+            logger.warning("Voice synthesis service initialization failed - synthesis may not work properly")
         
         logger.info("Application startup completed successfully")
         

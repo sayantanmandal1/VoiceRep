@@ -149,7 +149,7 @@ export default function FileUpload({ onFileUploaded, onError }: FileUploadProps)
 
         while (processingAttempts < maxProcessingAttempts) {
           try {
-            const fileStatus = await apiClient.getFileStatus(response.file_id);
+            const fileStatus = await apiClient.getFileStatus(response.id);
             
             if (fileStatus.status === 'ready') {
               updateProgress('processing', 100);

@@ -16,7 +16,9 @@ export default function VoiceCloningWorkflow({ className = '' }: VoiceCloningWor
   const [progressTracker] = useState(() => new ProgressTracker(VOICE_CLONING_STEPS));
   const [progressState, setProgressState] = useState<ProgressState>(progressTracker.getState());
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
+  const [uploadedFileData, setUploadedFileData] = useState<any>(null);
   const [text, setText] = useState('');
+  const [isTextValid, setIsTextValid] = useState(false);
   const [synthesisResult, setSynthesisResult] = useState<SynthesisResult | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
 
@@ -30,13 +32,19 @@ export default function VoiceCloningWorkflow({ className = '' }: VoiceCloningWor
     setUploadedFile(file);
   }, []);
 
-  const handleTextChange = useCallback((newText: string) => {
-    setText(newText);
+  const handleTextValidated = useCallback((textData: any) => {
+    setText(textData.sanitized_text || textData.text);
+    setIsTextValid(textData.is_valid);
+  }, []);
+
+  const handleTextError = useCallback((error: string) => {
+    setIsTextValid(false);
+    console.error('Text validation error:', error);
   }, []);
 
   const startVoiceCloning = async () => {
-    if (!uploadedFile || !text.trim()) {
-      alert('Please upload a file and enter text to synthesize.');
+    if (!uploadedFileData || !text.trim() || !isTextValid) {
+      alert('Please upload a file and enter valid text to synthesize.');
       return;
     }
 
@@ -59,18 +67,12 @@ export default function VoiceCloningWorkflow({ className = '' }: VoiceCloningWor
         throw error;
       }
 
-      // Step 2: Upload File
+      // Step 2: Upload File - Skip since file is already uploaded
       progressTracker.setCurrentStep('file-upload', 0);
-      let uploadResult;
-      try {
-        uploadResult = await apiClient.uploadFile(uploadedFile, (progress) => {
-          progressTracker.updateStepProgress('file-upload', progress);
-        });
-        progressTracker.completeStep('file-upload');
-      } catch (error) {
-        progressTracker.failStep('file-upload', `File upload failed: ${error}`);
-        throw error;
-      }
+      // File is already uploaded by FileUpload component
+      const uploadResult = uploadedFileData;
+      progressTracker.updateStepProgress('file-upload', 100);
+      progressTracker.completeStep('file-upload');
 
       // Step 3: Validate File
       progressTracker.setCurrentStep('file-validation', 0);
@@ -81,7 +83,7 @@ export default function VoiceCloningWorkflow({ className = '' }: VoiceCloningWor
           await new Promise(resolve => setTimeout(resolve, 200));
         }
         
-        const fileStatus = await apiClient.getFileStatus(uploadResult.file_id);
+        const fileStatus = await apiClient.getFileStatus(uploadResult.id);
         progressTracker.completeStep('file-validation');
       } catch (error) {
         progressTracker.failStep('file-validation', `File validation failed: ${error}`);
@@ -89,7 +91,13 @@ export default function VoiceCloningWorkflow({ className = '' }: VoiceCloningWor
       }
 
       // Step 4: Audio Extraction (if video file)
-      if (uploadedFile.type.startsWith('video/')) {
+      // Check file type from uploaded file data
+      const isVideoFile = uploadedFileData.filename?.toLowerCase().includes('.mp4') || 
+                         uploadedFileData.filename?.toLowerCase().includes('.avi') || 
+                         uploadedFileData.filename?.toLowerCase().includes('.mov') || 
+                         uploadedFileData.filename?.toLowerCase().includes('.mkv');
+      
+      if (isVideoFile) {
         progressTracker.setCurrentStep('audio-extraction', 0);
         try {
           // Simulate audio extraction
@@ -128,7 +136,7 @@ export default function VoiceCloningWorkflow({ className = '' }: VoiceCloningWor
 
         // Sub-step: Model Generation
         progressTracker.setCurrentStep('voice-analysis-model', 0);
-        const analysisResult = await apiClient.analyzeVoice(uploadResult.file_id);
+        const analysisResult = await apiClient.analyzeVoice(uploadResult.id);
         
         // Poll for analysis completion
         let attempts = 0;
@@ -187,7 +195,7 @@ export default function VoiceCloningWorkflow({ className = '' }: VoiceCloningWor
         progressTracker.setCurrentStep('synthesis-generation', 0);
         const synthesisRequest = {
           text: text,
-          voice_model_id: uploadResult.file_id, // Using file_id as voice_model_id for now
+          voice_model_id: uploadResult.id, // Using id as voice_model_id for now
           language: 'auto',
           output_format: 'wav' as const
         };
@@ -257,7 +265,9 @@ export default function VoiceCloningWorkflow({ className = '' }: VoiceCloningWor
 
   const resetWorkflow = () => {
     setUploadedFile(null);
+    setUploadedFileData(null);
     setText('');
+    setIsTextValid(false);
     setSynthesisResult(null);
     setIsProcessing(false);
     // Create new progress tracker
@@ -286,11 +296,17 @@ export default function VoiceCloningWorkflow({ className = '' }: VoiceCloningWor
         <div className="grid md:grid-cols-2 gap-8">
           <div>
             <h2 className="text-xl font-semibold mb-4">1. Upload Reference Audio/Video</h2>
-            <FileUpload onFileSelect={handleFileUpload} />
-            {uploadedFile && (
+            <FileUpload onFileUploaded={(fileData) => {
+              setUploadedFileData(fileData);
+              // We'll need to track the original file for type checking
+              // For now, we'll create a mock file object from the data
+              const mockFile = new File([''], fileData.filename, { type: 'audio/wav' });
+              setUploadedFile(mockFile);
+            }} />
+            {uploadedFileData && (
               <div className="mt-4 p-3 bg-green-50 border border-green-200 rounded-lg">
                 <p className="text-sm text-green-800">
-                  ✓ File selected: {uploadedFile.name}
+                  ✓ File uploaded: {uploadedFileData.filename}
                 </p>
               </div>
             )}
@@ -299,8 +315,8 @@ export default function VoiceCloningWorkflow({ className = '' }: VoiceCloningWor
           <div>
             <h2 className="text-xl font-semibold mb-4">2. Enter Text to Synthesize</h2>
             <TextInput
-              value={text}
-              onChange={handleTextChange}
+              onTextValidated={handleTextValidated}
+              onError={handleTextError}
               placeholder="Enter the text you want to synthesize in the cloned voice..."
               maxLength={1000}
             />
@@ -313,7 +329,7 @@ export default function VoiceCloningWorkflow({ className = '' }: VoiceCloningWor
         {!isProcessing && progressState.status !== 'completed' && (
           <button
             onClick={startVoiceCloning}
-            disabled={!uploadedFile || !text.trim()}
+            disabled={!uploadedFileData || !text.trim() || !isTextValid}
             className="px-8 py-3 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
           >
             Start Voice Cloning
@@ -335,7 +351,7 @@ export default function VoiceCloningWorkflow({ className = '' }: VoiceCloningWor
         <div className="mt-8">
           <h2 className="text-xl font-semibold mb-4">3. Your Cloned Voice</h2>
           <AudioPlayer
-            src={apiClient.getDownloadUrl(synthesisResult.task_id)}
+            audioUrl={apiClient.getDownloadUrl(synthesisResult.task_id)}
             title="Synthesized Speech"
             onDownload={() => {
               const url = apiClient.getDownloadUrl(synthesisResult.task_id);

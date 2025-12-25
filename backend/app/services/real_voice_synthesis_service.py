@@ -60,6 +60,11 @@ class RealVoiceSynthesisService:
             if progress_callback:
                 progress_callback(30, "Downloading TTS model (this may take a while on first run)")
             
+            # Fix PyTorch weights loading issue by allowing unsafe globals
+            import torch.serialization
+            from TTS.tts.configs.xtts_config import XttsConfig
+            torch.serialization.add_safe_globals([XttsConfig])
+            
             # Use XTTS v2 for voice cloning
             self.tts_model = TTS(self.model_name).to(self.device)
             
