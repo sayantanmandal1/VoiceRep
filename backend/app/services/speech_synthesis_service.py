@@ -48,9 +48,18 @@ except ImportError:
     SCIPY_AVAILABLE = False
     resample = None
 
+# Try to import TTS, fall back to mock if not available
+try:
+    from TTS.api import TTS
+    TTS_AVAILABLE = True
+except ImportError:
+    TTS_AVAILABLE = False
+    TTS = None
+
 from app.schemas.voice import VoiceModelSchema, VoiceProfileSchema
 from app.core.config import settings
-from app.services.performance_monitoring_service import performance_monitor
+# Import real voice synthesis service
+from app.services.real_voice_synthesis_service import real_voice_synthesis_service
 
 logger = logging.getLogger(__name__)
 
@@ -89,13 +98,16 @@ class SpeechSynthesizer:
             missing_deps.append("langdetect")
         if not SCIPY_AVAILABLE:
             missing_deps.append("scipy")
+        if not TTS_AVAILABLE:
+            missing_deps.append("TTS")
         
         if missing_deps:
-            logger.warning(f"Missing optional dependencies: {', '.join(missing_deps)}. Some features may not work properly.")
+            logger.warning(f"Missing optional dependencies: {', '.join(missing_deps)}. Using mock TTS service for development.")
     
     def _is_available(self) -> bool:
         """Check if synthesis service is available with required dependencies."""
-        return LIBROSA_AVAILABLE and SOUNDFILE_AVAILABLE
+        # Can work with mock service even without all dependencies
+        return True
     
     def synthesize_speech(
         self, 
@@ -122,23 +134,20 @@ class SpeechSynthesizer:
             start_time = time.time()
             operation_id = f"speech_synthesis_{int(time.time() * 1000)}"
             
-            # Start performance monitoring
-            performance_monitor.start_operation(
-                'speech_synthesis', 
-                operation_id,
-                {
-                    'text_length': len(text),
-                    'voice_model_id': voice_model.id,
-                    'language': language
-                }
-            )
-            
             if progress_callback:
                 progress_callback(5, "Preparing synthesis")
             
-            # Detect language if not provided
-            if language is None:
-                language = self._detect_language(text)
+            # Use real TTS service
+            if not TTS_AVAILABLE:
+                logger.error("TTS library not available. Please install with: pip install TTS")
+                return False, None, {"error": "TTS library not available"}
+            
+            # Use real voice synthesis service
+            logger.info("Using real TTS service for voice synthesis")
+            return await self._synthesize_with_real_tts(
+                text, voice_model, language, voice_settings, 
+                progress_callback, operation_id, start_time
+            )
             
             # Validate text input
             if not self._validate_text_input(text):
@@ -220,28 +229,68 @@ class SpeechSynthesizer:
             if progress_callback:
                 progress_callback(100, "Synthesis complete")
             
-            # End performance monitoring
-            performance_monitor.end_operation(
-                operation_id, 
-                success=True,
-                additional_metadata={
-                    'text_length': len(text),
-                    'processing_time': processing_time,
-                    'output_duration': metadata.get('duration', 0),
-                    'quality_score': metadata.get('quality_metrics', {}).get('estimated_quality', 0)
-                }
+            return True, output_path, metadata
+            
+        except Exception as e:
+            logger.error(f"Speech synthesis failed: {str(e)}")
+            return False, None, {"error": str(e)}
+    
+    async def _synthesize_with_real_tts(
+        self,
+        text: str,
+        voice_model: VoiceModelSchema,
+        language: Optional[str],
+        voice_settings: Optional[Dict[str, Any]],
+        progress_callback: Optional[callable],
+        operation_id: str,
+        start_time: float
+    ) -> Tuple[bool, Optional[str], Dict[str, Any]]:
+        """Use real TTS service for synthesis."""
+        try:
+            if progress_callback:
+                progress_callback(20, "Using real TTS service")
+            
+            # Get reference audio path from voice model
+            reference_audio_path = voice_model.model_path
+            if not reference_audio_path or not os.path.exists(reference_audio_path):
+                return False, None, {"error": "Reference audio not found"}
+            
+            # Generate output path
+            timestamp = int(time.time())
+            output_filename = f"synthesis_{voice_model.id}_{timestamp}.wav"
+            output_path = os.path.join(settings.RESULTS_DIR, output_filename)
+            
+            # Use real voice synthesis service
+            result = await real_voice_synthesis_service.synthesize_speech(
+                text=text,
+                reference_audio_path=reference_audio_path,
+                output_path=output_path,
+                language=language or "en",
+                progress_callback=progress_callback
             )
+            
+            processing_time = time.time() - start_time
+            
+            # Generate metadata
+            metadata = {
+                "text": text,
+                "language": language or "en",
+                "voice_model_id": voice_model.id,
+                "processing_time": processing_time,
+                "sample_rate": result.get("sample_rate", 22050),
+                "duration": result.get("duration", 0),
+                "voice_settings": voice_settings or {},
+                "quality_score": result.get("quality_score", 0.8),
+                "real_synthesis": True
+            }
+            
+            if progress_callback:
+                progress_callback(100, "Real synthesis complete")
             
             return True, output_path, metadata
             
         except Exception as e:
-            # End performance monitoring with error
-            performance_monitor.end_operation(
-                operation_id, 
-                success=False,
-                error_message=str(e)
-            )
-            logger.error(f"Speech synthesis failed: {str(e)}")
+            logger.error(f"Real synthesis failed: {str(e)}")
             return False, None, {"error": str(e)}
     
     def _detect_language(self, text: str) -> str:

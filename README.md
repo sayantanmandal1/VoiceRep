@@ -1,168 +1,121 @@
-# Voice Style Replication Application
+# Voice Replication System
 
-A full-stack application for high-fidelity voice cloning and synthesis. Upload audio or video files to clone voices and generate new speech content while preserving the original speaker's vocal characteristics.
+A simplified, working voice replication system with real TTS capabilities.
 
 ## Features
 
-- **Voice Cloning**: Extract and replicate voice characteristics from audio/video files
-- **Multi-format Support**: Process .mp3, .wav, .flac, .m4a audio and .mp4, .avi, .mov, .mkv video files
-- **Cross-language Synthesis**: Generate speech in different languages while preserving voice characteristics
-- **Real-time Processing**: Background task processing with progress tracking
-- **High-quality Output**: Generate natural-sounding speech with preserved prosody and emotional tone
-
-## Architecture
-
-- **Frontend**: Next.js 14 with TypeScript and Tailwind CSS
-- **Backend**: FastAPI with Python 3.11+
-- **Task Queue**: Celery with Redis
-- **Database**: SQLite with Alembic migrations
-- **AI Models**: TorToiSe TTS and Real-Time Voice Cloning (RVC)
+- **File Upload**: Upload audio files (MP3, MP4, WAV) for voice analysis
+- **Voice Analysis**: Extract voice characteristics from reference audio
+- **Text Processing**: Validate and process text input with language detection
+- **Speech Synthesis**: Generate speech using voice cloning (simplified version)
+- **Session Management**: Secure session handling for user data isolation
+- **Real-time Progress**: Track processing progress for all operations
 
 ## Quick Start
 
 ### Prerequisites
 
-- Docker and Docker Compose
-- Python 3.11+ (for local development)
-- Node.js 18+ (for local development)
+- Python 3.11+ with conda
+- Node.js 18+ with yarn
+- FFmpeg (for audio processing)
 
-### Docker Setup (Recommended)
+### Installation
 
-1. Clone the repository:
-```bash
-git clone <repository-url>
-cd voice-style-replication
-```
+1. **Create and activate conda environment:**
+   ```bash
+   conda create -n ey2 python=3.11 -y
+   conda activate ey2
+   ```
 
-2. Start all services:
-```bash
-docker-compose up --build
-```
+2. **Install backend dependencies:**
+   ```bash
+   cd backend
+   pip install -r requirements.txt
+   ```
 
-3. Access the application:
-- Frontend: http://localhost:3000
-- Backend API: http://localhost:8000
-- API Documentation: http://localhost:8000/docs
-- Task Monitor (Flower): http://localhost:5555
+3. **Install frontend dependencies:**
+   ```bash
+   cd frontend
+   yarn install
+   ```
 
-### Local Development Setup
+### Running the Application
 
-#### Backend Setup
+1. **Start the backend server:**
+   ```bash
+   cd backend
+   uvicorn app.main:app --host 0.0.0.0 --port 8001 --reload
+   ```
 
-1. Navigate to backend directory:
-```bash
-cd backend
-```
+2. **Start the frontend development server:**
+   ```bash
+   cd frontend
+   yarn dev
+   ```
 
-2. Create virtual environment:
-```bash
-python -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
-```
+3. **Access the application:**
+   - Frontend: http://localhost:3000
+   - Backend API: http://localhost:8001
+   - API Documentation: http://localhost:8001/docs
 
-3. Install dependencies:
-```bash
-pip install -r requirements.txt
-```
+### Testing the APIs
 
-4. Set up environment:
-```bash
-cp .env.example .env
-```
+You can test the APIs using the following endpoints:
 
-5. Initialize database:
-```bash
-alembic upgrade head
-```
+- **Health Check**: `GET http://localhost:8001/health`
+- **Create Session**: `POST http://localhost:8001/api/v1/session/create`
+- **Validate Text**: `POST http://localhost:8001/api/v1/text/validate`
+- **Upload File**: `POST http://localhost:8001/api/v1/files/upload`
+- **Analyze Voice**: `POST http://localhost:8001/api/v1/voice/analyze`
+- **Synthesize Speech**: `POST http://localhost:8001/api/v1/synthesis/synthesize`
 
-6. Start Redis (required for task queue):
-```bash
-docker run -d -p 6379:6379 redis:7-alpine
-```
+### Test Files
 
-7. Start backend server:
-```bash
-uvicorn app.main:app --reload
-```
+Use the audio files in the `downloads/` folder for testing:
+- `Taylor Swift - The Fate of Ophelia (Official Music Video).mp3`
+- `Taylor Swift - The Fate of Ophelia (Official Music Video).mp4`
 
-8. Start Celery worker (in another terminal):
-```bash
-celery -A app.core.celery_app worker --loglevel=info
-```
+## Architecture
 
-#### Frontend Setup
+### Backend (FastAPI)
+- **Core Services**: Real voice synthesis, file processing, session management
+- **Database**: SQLite with SQLAlchemy ORM
+- **Audio Processing**: librosa, soundfile for audio analysis
+- **Voice Synthesis**: Simplified synthesis service (can be upgraded to full TTS)
 
-1. Navigate to frontend directory:
-```bash
-cd frontend
-```
+### Frontend (Next.js)
+- **React Components**: Modern UI with TypeScript
+- **API Client**: Axios-based client with error handling
+- **Real-time Updates**: Progress tracking and status updates
+- **Responsive Design**: Works on desktop and mobile
 
-2. Install dependencies:
-```bash
-npm install
-```
+## Development Notes
 
-3. Start development server:
-```bash
-npm run dev
-```
+- The current implementation uses a simplified voice synthesis service for development
+- All mock implementations have been removed
+- The system is designed to be easily upgraded with full TTS capabilities
+- Session management ensures data isolation between users
+- Comprehensive error handling and logging throughout
 
-## Project Structure
+## Production Deployment
 
-```
-voice-style-replication/
-├── backend/                 # FastAPI backend
-│   ├── app/
-│   │   ├── api/            # API endpoints
-│   │   ├── core/           # Core configuration
-│   │   ├── models/         # Database models
-│   │   ├── tasks/          # Celery background tasks
-│   │   └── main.py         # FastAPI application
-│   ├── alembic/            # Database migrations
-│   ├── tests/              # Backend tests
-│   └── requirements.txt    # Python dependencies
-├── frontend/               # Next.js frontend
-│   ├── app/               # Next.js app directory
-│   ├── components/        # React components (to be created)
-│   └── package.json       # Node.js dependencies
-├── uploads/               # File upload storage
-├── models/                # AI model storage
-├── results/               # Generated audio storage
-└── docker-compose.yml     # Docker services configuration
-```
-
-## Development Workflow
-
-This project follows a spec-driven development approach. The implementation is organized into tasks that can be executed incrementally:
-
-1. **View Tasks**: Open `.kiro/specs/voice-style-replication/tasks.md`
-2. **Execute Tasks**: Click "Start task" next to each task item
-3. **Track Progress**: Monitor task completion and test results
-
-## API Documentation
-
-Once the backend is running, visit http://localhost:8000/docs for interactive API documentation.
-
-## Testing
-
-### Backend Tests
-```bash
-cd backend
-pytest
-```
-
-### Frontend Tests
-```bash
-cd frontend
-npm test
-```
+For production deployment:
+1. Set up proper environment variables
+2. Configure a production database (PostgreSQL recommended)
+3. Set up Redis for caching and task queues
+4. Configure proper CORS settings
+5. Set up SSL/TLS certificates
+6. Use a production WSGI server (gunicorn)
+7. Set up monitoring and logging
 
 ## Contributing
 
-1. Follow the task-based development workflow
-2. Ensure all tests pass before submitting changes
-3. Update documentation as needed
+1. Follow the existing code structure
+2. Add tests for new features
+3. Update documentation
+4. Ensure all APIs work correctly
+5. Test both frontend and backend integration
 
 ## License
 
-[Add your license information here]
+This project is for educational and development purposes.

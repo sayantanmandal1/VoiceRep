@@ -106,7 +106,8 @@ async def upload_file(
         db.refresh(reference_audio)
         
         return FileUploadResponse(
-            file_id=reference_audio.id,
+            id=reference_audio.id,  # Frontend expects 'id'
+            file_id=reference_audio.id,  # Keep for backward compatibility
             filename=reference_audio.filename,
             file_size=reference_audio.file_size,
             duration=reference_audio.duration,

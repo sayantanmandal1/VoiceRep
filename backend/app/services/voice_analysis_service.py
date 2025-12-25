@@ -21,7 +21,7 @@ from app.schemas.voice import (
 )
 from app.models.voice import VoiceProfile, VoiceModel, ProsodyFeatures, EmotionalProfile
 from app.core.config import settings
-from app.services.performance_monitoring_service import performance_monitor
+# from app.services.performance_monitoring_service import performance_monitor
 
 logger = logging.getLogger(__name__)
 

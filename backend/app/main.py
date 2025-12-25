@@ -19,9 +19,9 @@ from app.core.error_handling import (
     ErrorCategory
 )
 from app.api.v1.api import api_router
-from app.middleware.performance_middleware import setup_performance_middleware
+# from app.middleware.performance_middleware import setup_performance_middleware
 from app.middleware.session_middleware import setup_session_middleware
-from app.services.cleanup_service import schedule_cleanup_task
+# from app.services.cleanup_service import schedule_cleanup_task
 from app.services.real_voice_synthesis_service import initialize_voice_synthesis_service
 
 # Import models to ensure they are registered with Base
@@ -53,8 +53,8 @@ async def lifespan(app: FastAPI):
         logger.info("Performance monitoring disabled temporarily")
         
         # Start cleanup task scheduler
-        schedule_cleanup_task()
-        logger.info("Cleanup task scheduler started")
+        # schedule_cleanup_task()
+        # logger.info("Cleanup task scheduler started")
         
         # Initialize real voice synthesis service
         logger.info("Initializing real voice synthesis service...")
@@ -106,7 +106,7 @@ app.add_middleware(
 setup_session_middleware(app)
 
 # Set up performance monitoring middleware
-setup_performance_middleware(app)
+# setup_performance_middleware(app)
 
 # Add custom exception handlers
 app.add_exception_handler(422, validation_exception_handler)

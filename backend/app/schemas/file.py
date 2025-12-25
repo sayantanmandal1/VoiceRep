@@ -10,7 +10,8 @@ from app.models.file import ProcessingStatus
 
 class FileUploadResponse(BaseModel):
     """Response schema for file upload."""
-    file_id: str
+    id: str  # Changed from file_id to id to match frontend expectations
+    file_id: str  # Keep for backward compatibility
     filename: str
     file_size: int
     duration: Optional[float] = None
