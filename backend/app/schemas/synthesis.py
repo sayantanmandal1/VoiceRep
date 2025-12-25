@@ -188,7 +188,7 @@ class QualityAssessment(BaseModel):
     prosody_accuracy: float = Field(..., ge=0.0, le=1.0, description="Prosody preservation accuracy")
     
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "overall_quality": 0.92,
                 "naturalness": 0.89,
@@ -215,7 +215,7 @@ class SynthesisMetadata(BaseModel):
     phonetic_adaptation: bool = Field(default=False, description="Whether phonetic adaptation was applied")
     
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "text": "Hello, this is a test.",
                 "language": "english",
