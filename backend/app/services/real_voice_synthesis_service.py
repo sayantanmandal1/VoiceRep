@@ -55,6 +55,7 @@ class AdvancedVoiceCloningService:
         self.voice_clone_model = None
         self.xtts_model = None
         self.tortoise_model = None
+        self.tts_model = None  # Main TTS model reference
         
         # Model configurations for different quality levels
         self.model_configs = {
@@ -108,6 +109,7 @@ class AdvancedVoiceCloningService:
                 self.xtts_model = TTS(model_name=self.model_configs["xtts_v2"]["name"], progress_bar=False)
                 logger.info("Successfully loaded XTTS v2 model for advanced voice cloning")
                 self.voice_clone_model = self.xtts_model
+                self.tts_model = self.xtts_model  # Set main TTS model reference
             except Exception as e:
                 logger.warning(f"XTTS v2 model failed to load: {e}")
             
@@ -118,6 +120,7 @@ class AdvancedVoiceCloningService:
                 
                 try:
                     self.voice_clone_model = TTS(model_name=self.model_configs["bark"]["name"], progress_bar=False)
+                    self.tts_model = self.voice_clone_model  # Set main TTS model reference
                     logger.info("Successfully loaded Bark model for voice cloning")
                 except Exception as e:
                     logger.warning(f"Bark model failed to load: {e}")
@@ -129,6 +132,7 @@ class AdvancedVoiceCloningService:
                 
                 try:
                     self.voice_clone_model = TTS(model_name=self.model_configs["your_tts"]["name"], progress_bar=False)
+                    self.tts_model = self.voice_clone_model  # Set main TTS model reference
                     logger.info("Successfully loaded YourTTS model for voice cloning")
                 except Exception as e:
                     logger.warning(f"YourTTS model failed to load: {e}")
