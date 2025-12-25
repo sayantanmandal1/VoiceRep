@@ -26,12 +26,11 @@ psutil==5.9.6
 
 # Real Voice Cloning Dependencies
 TTS==0.22.0
-coqui-ai-tts==0.22.0
 transformers>=4.21.0
 datasets>=2.0.0
 accelerate>=0.20.0
 phonemizer>=3.2.1
-espeak-ng>=1.51
+espeak-ng>=1.51; sys_platform != "win32"
 pydub>=0.25.1
 matplotlib>=3.5.0
 Pillow>=9.0.0
@@ -43,7 +42,7 @@ bangla>=0.0.2
 bnnumerizer>=0.0.2
 bnunicodenormalizer>=0.1.1
 gruut[de,es,fr]>=2.2.3
-mecab-python3>=1.0.6
+mecab-python3>=1.0.6; sys_platform != "win32"
 num2words>=0.5.12
 anyascii>=0.3.2
 jamo>=0.4.1
