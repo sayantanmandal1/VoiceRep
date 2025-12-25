@@ -140,7 +140,7 @@ class SynthesisResult(BaseModel):
     completed_at: Optional[datetime] = Field(None, description="Task completion timestamp")
     
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "task_id": "synthesis_task_123",
                 "status": "completed",
@@ -167,7 +167,7 @@ class SynthesisProgress(BaseModel):
     estimated_remaining: Optional[float] = Field(None, description="Estimated remaining time in seconds")
     
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "task_id": "synthesis_task_123",
                 "progress": 65,
