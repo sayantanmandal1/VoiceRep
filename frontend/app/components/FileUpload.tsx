@@ -2,7 +2,8 @@
 
 import React, { useCallback, useState } from 'react';
 import { useDropzone } from 'react-dropzone';
-import axios from 'axios';
+import { apiClient } from '../lib/api';
+import { ComprehensiveProgressBar, useProgressSteps, ProgressStep } from './ComprehensiveProgressBar';
 
 interface FileUploadProps {
   onFileUploaded?: (fileData: any) => void;
@@ -15,6 +16,7 @@ interface UploadState {
   status: 'idle' | 'uploading' | 'processing' | 'complete' | 'error';
   error?: string;
   fileData?: any;
+  showProgress?: boolean;
 }
 
 const SUPPORTED_FORMATS = ['.mp3', '.wav', '.flac', '.m4a', '.mp4', '.avi', '.mov', '.mkv'];
@@ -27,74 +29,213 @@ export default function FileUpload({ onFileUploaded, onError }: FileUploadProps)
     status: 'idle'
   });
 
+  // Progress steps for comprehensive tracking
+  const uploadProgressSteps: Omit<ProgressStep, 'progress' | 'status'>[] = [
+    {
+      id: 'validation',
+      name: 'File Validation',
+      description: 'Validating file format, size, and structure',
+      estimatedDuration: 1000
+    },
+    {
+      id: 'preparation',
+      name: 'Upload Preparation',
+      description: 'Preparing file for secure upload',
+      estimatedDuration: 500
+    },
+    {
+      id: 'upload',
+      name: 'File Upload',
+      description: 'Uploading file to server',
+      estimatedDuration: 5000
+    },
+    {
+      id: 'processing',
+      name: 'Server Processing',
+      description: 'Extracting metadata and analyzing audio',
+      estimatedDuration: 3000
+    },
+    {
+      id: 'finalization',
+      name: 'Finalization',
+      description: 'Completing upload and preparing for analysis',
+      estimatedDuration: 1000
+    }
+  ];
+
+  const {
+    steps,
+    startStep,
+    updateProgress,
+    completeStep,
+    errorStep,
+    resetSteps
+  } = useProgressSteps(uploadProgressSteps);
+
   const onDrop = useCallback(async (acceptedFiles: File[]) => {
     const file = acceptedFiles[0];
     if (!file) return;
 
-    // Validate file size
-    if (file.size > MAX_FILE_SIZE) {
-      const error = `File size exceeds maximum limit of 100MB`;
-      setUploadState(prev => ({ ...prev, status: 'error', error }));
-      onError?.(error);
-      return;
-    }
-
-    // Validate file format
-    const fileExt = '.' + file.name.split('.').pop()?.toLowerCase();
-    if (!SUPPORTED_FORMATS.includes(fileExt)) {
-      const error = `Unsupported file format. Supported formats: ${SUPPORTED_FORMATS.join(', ')}`;
-      setUploadState(prev => ({ ...prev, status: 'error', error }));
-      onError?.(error);
-      return;
-    }
-
+    // Reset progress steps
+    resetSteps();
+    
+    // Start validation step
+    startStep('validation');
     setUploadState(prev => ({ 
       ...prev, 
       file, 
       status: 'uploading', 
       progress: 0, 
-      error: undefined 
+      error: undefined,
+      showProgress: true
     }));
 
     try {
-      const formData = new FormData();
-      formData.append('file', file);
-
-      const response = await axios.post('http://localhost:8000/api/v1/files/upload', formData, {
-        headers: {
-          'Content-Type': 'multipart/form-data',
-        },
-        onUploadProgress: (progressEvent) => {
-          const progress = progressEvent.total 
-            ? Math.round((progressEvent.loaded * 100) / progressEvent.total)
-            : 0;
-          setUploadState(prev => ({ ...prev, progress }));
-        },
-      });
-
-      setUploadState(prev => ({ 
-        ...prev, 
-        status: 'complete', 
-        progress: 100,
-        fileData: response.data
-      }));
+      // Step 1: File Validation
+      updateProgress('validation', 30);
       
-      onFileUploaded?.(response.data);
+      // Validate file size
+      if (file.size > MAX_FILE_SIZE) {
+        const error = `File size exceeds maximum limit of 100MB`;
+        errorStep('validation', error);
+        setUploadState(prev => ({ ...prev, status: 'error', error, showProgress: false }));
+        onError?.(error);
+        return;
+      }
+
+      updateProgress('validation', 60);
+
+      // Validate file format
+      const fileExt = '.' + file.name.split('.').pop()?.toLowerCase();
+      if (!SUPPORTED_FORMATS.includes(fileExt)) {
+        const error = `Unsupported file format. Supported formats: ${SUPPORTED_FORMATS.join(', ')}`;
+        errorStep('validation', error);
+        setUploadState(prev => ({ ...prev, status: 'error', error, showProgress: false }));
+        onError?.(error);
+        return;
+      }
+
+      updateProgress('validation', 100);
+      completeStep('validation');
+
+      // Step 2: Upload Preparation
+      startStep('preparation');
+      updateProgress('preparation', 50);
+      
+      // Small delay to show preparation step
+      await new Promise(resolve => setTimeout(resolve, 300));
+      
+      updateProgress('preparation', 100);
+      completeStep('preparation');
+
+      // Step 3: File Upload
+      startStep('upload');
+      
+      try {
+        const response = await apiClient.uploadFile(file, (progress) => {
+          updateProgress('upload', progress);
+          setUploadState(prev => ({ ...prev, progress }));
+        });
+
+        completeStep('upload');
+
+        // Step 4: Server Processing
+        startStep('processing');
+        updateProgress('processing', 20);
+
+        // Poll for file status to track server processing
+        let processingAttempts = 0;
+        const maxProcessingAttempts = 30; // 15 seconds with 500ms intervals
+
+        while (processingAttempts < maxProcessingAttempts) {
+          try {
+            const fileStatus = await apiClient.getFileStatus(response.id);
+            
+            if (fileStatus.status === 'ready') {
+              updateProgress('processing', 100);
+              completeStep('processing');
+              break;
+            } else if (fileStatus.status === 'failed') {
+              throw new Error('Server processing failed');
+            } else {
+              // Update progress based on processing status
+              const progressValue = Math.min(95, 20 + (processingAttempts / maxProcessingAttempts) * 75);
+              updateProgress('processing', progressValue);
+            }
+          } catch (statusError) {
+            // If status check fails, continue with estimated progress
+            const progressValue = Math.min(95, 20 + (processingAttempts / maxProcessingAttempts) * 75);
+            updateProgress('processing', progressValue);
+          }
+
+          await new Promise(resolve => setTimeout(resolve, 500));
+          processingAttempts++;
+        }
+
+        // Complete processing step even if we couldn't get exact status
+        if (processingAttempts >= maxProcessingAttempts) {
+          updateProgress('processing', 100);
+          completeStep('processing');
+        }
+
+        // Step 5: Finalization
+        startStep('finalization');
+        updateProgress('finalization', 50);
+        
+        // Small delay for finalization
+        await new Promise(resolve => setTimeout(resolve, 500));
+        
+        updateProgress('finalization', 100);
+        completeStep('finalization');
+
+        setUploadState(prev => ({ 
+          ...prev, 
+          status: 'complete', 
+          progress: 100,
+          fileData: response,
+          showProgress: false
+        }));
+        
+        onFileUploaded?.(response);
+
+      } catch (uploadError: any) {
+        const errorMessage = uploadError.message || 'Upload failed';
+        
+        // Determine which step failed
+        const activeStep = steps.find(step => step.status === 'active');
+        if (activeStep) {
+          errorStep(activeStep.id, errorMessage);
+        }
+        
+        setUploadState(prev => ({ 
+          ...prev, 
+          status: 'error', 
+          error: errorMessage,
+          showProgress: false
+        }));
+        
+        onError?.(errorMessage);
+      }
+
     } catch (error: any) {
-      const errorMessage = error.response?.data?.detail?.message || 
-                          error.response?.data?.detail || 
-                          error.message || 
-                          'Upload failed';
+      const errorMessage = error.message || 'Validation failed';
+      
+      // Mark validation as failed if we're still in that step
+      const activeStep = steps.find(step => step.status === 'active');
+      if (activeStep) {
+        errorStep(activeStep.id, errorMessage);
+      }
       
       setUploadState(prev => ({ 
         ...prev, 
         status: 'error', 
-        error: errorMessage 
+        error: errorMessage,
+        showProgress: false
       }));
       
       onError?.(errorMessage);
     }
-  }, [onFileUploaded, onError]);
+  }, [onFileUploaded, onError, steps, startStep, updateProgress, completeStep, errorStep, resetSteps]);
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
@@ -110,8 +251,10 @@ export default function FileUpload({ onFileUploaded, onError }: FileUploadProps)
     setUploadState({
       file: null,
       progress: 0,
-      status: 'idle'
+      status: 'idle',
+      showProgress: false
     });
+    resetSteps();
   };
 
   const formatFileSize = (bytes: number) => {
@@ -130,6 +273,16 @@ export default function FileUpload({ onFileUploaded, onError }: FileUploadProps)
 
   return (
     <div className="w-full max-w-md mx-auto">
+      {/* Comprehensive Progress Bar */}
+      {uploadState.showProgress && (
+        <div className="mb-6">
+          <ComprehensiveProgressBar 
+            steps={steps}
+            className="mb-4"
+          />
+        </div>
+      )}
+
       {uploadState.status === 'idle' && (
         <div
           {...getRootProps()}

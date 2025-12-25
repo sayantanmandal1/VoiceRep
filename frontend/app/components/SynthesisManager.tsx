@@ -4,6 +4,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { apiClient, SynthesisRequest, SynthesisProgress, SynthesisResult } from '../lib/api';
 import AudioPlayer from './AudioPlayer';
 import { useNotifications } from './NotificationSystem';
+import { ComprehensiveProgressBar, useProgressSteps, ProgressStep } from './ComprehensiveProgressBar';
 
 interface SynthesisManagerProps {
   uploadedFile?: any;
@@ -29,7 +30,63 @@ export default function SynthesisManager({
   const [progress, setProgress] = useState<SynthesisProgress | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string>('');
+  const [showProgress, setShowProgress] = useState(false);
   const { addNotification } = useNotifications();
+
+  // Progress steps for comprehensive synthesis tracking
+  const synthesisProgressSteps: Omit<ProgressStep, 'progress' | 'status'>[] = [
+    {
+      id: 'initialization',
+      name: 'Synthesis Initialization',
+      description: 'Preparing voice model and text for synthesis',
+      estimatedDuration: 2000
+    },
+    {
+      id: 'voice_analysis',
+      name: 'Voice Analysis',
+      description: 'Analyzing reference voice characteristics',
+      estimatedDuration: 5000
+    },
+    {
+      id: 'text_processing',
+      name: 'Text Processing',
+      description: 'Processing and normalizing input text',
+      estimatedDuration: 1500
+    },
+    {
+      id: 'model_loading',
+      name: 'Model Loading',
+      description: 'Loading and preparing synthesis models',
+      estimatedDuration: 3000
+    },
+    {
+      id: 'synthesis',
+      name: 'Voice Synthesis',
+      description: 'Generating synthetic speech with cloned voice',
+      estimatedDuration: 8000
+    },
+    {
+      id: 'post_processing',
+      name: 'Audio Post-Processing',
+      description: 'Enhancing and finalizing audio output',
+      estimatedDuration: 2000
+    },
+    {
+      id: 'finalization',
+      name: 'Finalization',
+      description: 'Preparing audio for download and playback',
+      estimatedDuration: 1000
+    }
+  ];
+
+  const {
+    steps,
+    startStep,
+    updateProgress,
+    completeStep,
+    errorStep,
+    resetSteps
+  } = useProgressSteps(synthesisProgressSteps);
 
   // Start synthesis using the new API client
   const startSynthesis = useCallback(async () => {
@@ -43,6 +100,12 @@ export default function SynthesisManager({
       setError('');
       setSynthesisResult(null);
       setProgress(null);
+      setShowProgress(true);
+      resetSteps();
+
+      // Step 1: Initialization
+      startStep('initialization');
+      updateProgress('initialization', 30);
 
       // Create synthesis request
       const synthesisRequest: SynthesisRequest = {
@@ -59,9 +122,24 @@ export default function SynthesisManager({
         quality: 'high'
       };
 
+      updateProgress('initialization', 70);
+      
+      // Small delay to show initialization
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
+      updateProgress('initialization', 100);
+      completeStep('initialization');
+
+      // Step 2: Voice Analysis
+      startStep('voice_analysis');
+      updateProgress('voice_analysis', 20);
+
       // Use the API client for synthesis
       const response = await apiClient.synthesizeSpeech(synthesisRequest);
       setSynthesisTask(response);
+
+      updateProgress('voice_analysis', 100);
+      completeStep('voice_analysis');
 
       addNotification({
         type: 'info',
@@ -75,9 +153,17 @@ export default function SynthesisManager({
 
     } catch (error: any) {
       const errorMessage = error.message || 'Failed to start synthesis';
+      
+      // Mark current step as failed
+      const activeStep = steps.find(step => step.status === 'active');
+      if (activeStep) {
+        errorStep(activeStep.id, errorMessage);
+      }
+      
       setError(errorMessage);
       onError?.(errorMessage);
       setIsProcessing(false);
+      setShowProgress(false);
       
       addNotification({
         type: 'error',
@@ -86,12 +172,16 @@ export default function SynthesisManager({
         duration: 6000
       });
     }
-  }, [uploadedFile, validatedText, onError, addNotification]);
+  }, [uploadedFile, validatedText, onError, addNotification, steps, startStep, updateProgress, completeStep, errorStep, resetSteps]);
 
   // Poll for synthesis progress using API client
   const pollProgress = useCallback(async (taskId: string) => {
     const maxAttempts = 120; // 2 minutes with 1-second intervals
     let attempts = 0;
+
+    // Start text processing step
+    startStep('text_processing');
+    updateProgress('text_processing', 50);
 
     const poll = async () => {
       try {
@@ -101,12 +191,79 @@ export default function SynthesisManager({
         const progressData = await apiClient.getSynthesisStatus(taskId);
         setProgress(progressData);
 
+        // Map progress to our detailed steps
+        if (progressData.stage === 'queued') {
+          if (steps.find(s => s.id === 'text_processing')?.status === 'active') {
+            updateProgress('text_processing', 100);
+            completeStep('text_processing');
+            startStep('model_loading');
+            updateProgress('model_loading', 30);
+          }
+        } else if (progressData.stage === 'processing') {
+          // Map backend progress to our steps
+          const backendProgress = progressData.progress || 0;
+          
+          if (backendProgress < 20) {
+            // Still in model loading
+            if (steps.find(s => s.id === 'text_processing')?.status === 'active') {
+              updateProgress('text_processing', 100);
+              completeStep('text_processing');
+            }
+            if (steps.find(s => s.id === 'model_loading')?.status !== 'active') {
+              startStep('model_loading');
+            }
+            updateProgress('model_loading', Math.min(100, backendProgress * 5));
+          } else if (backendProgress < 80) {
+            // Main synthesis phase
+            if (steps.find(s => s.id === 'model_loading')?.status === 'active') {
+              updateProgress('model_loading', 100);
+              completeStep('model_loading');
+            }
+            if (steps.find(s => s.id === 'synthesis')?.status !== 'active') {
+              startStep('synthesis');
+            }
+            const synthesisProgress = ((backendProgress - 20) / 60) * 100;
+            updateProgress('synthesis', Math.min(100, synthesisProgress));
+          } else {
+            // Post-processing phase
+            if (steps.find(s => s.id === 'synthesis')?.status === 'active') {
+              updateProgress('synthesis', 100);
+              completeStep('synthesis');
+            }
+            if (steps.find(s => s.id === 'post_processing')?.status !== 'active') {
+              startStep('post_processing');
+            }
+            const postProcessProgress = ((backendProgress - 80) / 20) * 100;
+            updateProgress('post_processing', Math.min(100, postProcessProgress));
+          }
+        }
+
         // Check if completed
         if (progressData.stage === 'completed') {
+          // Complete any remaining steps
+          ['text_processing', 'model_loading', 'synthesis', 'post_processing'].forEach(stepId => {
+            const step = steps.find(s => s.id === stepId);
+            if (step && step.status !== 'completed') {
+              if (step.status === 'active') {
+                updateProgress(stepId, 100);
+              }
+              completeStep(stepId);
+            }
+          });
+
+          // Start and complete finalization
+          startStep('finalization');
+          updateProgress('finalization', 50);
+          
           // Get final result
           const result = await apiClient.getSynthesisResult(taskId);
+          
+          updateProgress('finalization', 100);
+          completeStep('finalization');
+          
           setSynthesisResult(result);
           setIsProcessing(false);
+          setShowProgress(false);
           
           addNotification({
             type: 'success',
@@ -119,9 +276,15 @@ export default function SynthesisManager({
 
         // Check if failed
         if (progressData.stage === 'failed') {
+          const activeStep = steps.find(step => step.status === 'active');
+          if (activeStep) {
+            errorStep(activeStep.id, progressData.status);
+          }
+          
           setError(progressData.status);
           onError?.(progressData.status);
           setIsProcessing(false);
+          setShowProgress(false);
           
           addNotification({
             type: 'error',
@@ -137,9 +300,16 @@ export default function SynthesisManager({
           setTimeout(poll, 1000); // Poll every second
         } else if (attempts >= maxAttempts) {
           const timeoutMessage = 'Synthesis timeout - please try again';
+          
+          const activeStep = steps.find(step => step.status === 'active');
+          if (activeStep) {
+            errorStep(activeStep.id, timeoutMessage);
+          }
+          
           setError(timeoutMessage);
           onError?.(timeoutMessage);
           setIsProcessing(false);
+          setShowProgress(false);
           
           addNotification({
             type: 'error',
@@ -159,9 +329,16 @@ export default function SynthesisManager({
         }
 
         const errorMessage = error.message || 'Failed to get synthesis status';
+        
+        const activeStep = steps.find(step => step.status === 'active');
+        if (activeStep) {
+          errorStep(activeStep.id, errorMessage);
+        }
+        
         setError(errorMessage);
         onError?.(errorMessage);
         setIsProcessing(false);
+        setShowProgress(false);
         
         addNotification({
           type: 'error',
@@ -172,9 +349,13 @@ export default function SynthesisManager({
       }
     };
 
-    // Start polling
-    setTimeout(poll, 1000); // Initial delay
-  }, [onError, addNotification]);
+    // Complete text processing and start polling
+    setTimeout(() => {
+      updateProgress('text_processing', 100);
+      completeStep('text_processing');
+      poll();
+    }, 1000);
+  }, [onError, addNotification, steps, startStep, updateProgress, completeStep, errorStep]);
 
   // Handle download completion
   const handleDownloadComplete = useCallback(() => {
@@ -195,6 +376,8 @@ export default function SynthesisManager({
       setSynthesisTask(null);
       setProgress(null);
       setIsProcessing(false);
+      setShowProgress(false);
+      resetSteps();
       
       addNotification({
         type: 'info',
@@ -211,7 +394,7 @@ export default function SynthesisManager({
         duration: 4000
       });
     }
-  }, [synthesisTask, addNotification]);
+  }, [synthesisTask, addNotification, resetSteps]);
 
   // Format estimated time
   const formatEstimatedTime = (isoString?: string) => {
@@ -257,6 +440,16 @@ export default function SynthesisManager({
       <h2 className="text-2xl font-semibold text-gray-900 dark:text-white mb-6">
         Step 3: Voice Synthesis
       </h2>
+
+      {/* Comprehensive Progress Bar */}
+      {showProgress && (
+        <div className="mb-6">
+          <ComprehensiveProgressBar 
+            steps={steps}
+            className="mb-4"
+          />
+        </div>
+      )}
 
       {/* Error Display */}
       {error && (
@@ -423,6 +616,8 @@ export default function SynthesisManager({
                 setSynthesisResult(null);
                 setProgress(null);
                 setError('');
+                setShowProgress(false);
+                resetSteps();
               }}
               className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition-colors"
             >

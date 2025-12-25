@@ -46,10 +46,10 @@ async def lifespan(app: FastAPI):
         Base.metadata.create_all(bind=engine)
         logger.info("Database initialized successfully")
         
-        # Start performance monitoring
-        from app.services.performance_monitoring_service import performance_monitor
-        performance_monitor.start_monitoring()
-        logger.info("Performance monitoring started")
+        # Start performance monitoring (disabled temporarily to prevent blocking)
+        # from app.services.performance_monitoring_service import performance_monitor
+        # performance_monitor.start_monitoring()
+        logger.info("Performance monitoring disabled temporarily")
         
         # Start cleanup task scheduler
         schedule_cleanup_task()
@@ -67,9 +67,9 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down Voice Style Replication API")
     
     try:
-        from app.services.performance_monitoring_service import performance_monitor
-        performance_monitor.stop_monitoring()
-        logger.info("Performance monitoring stopped")
+        # from app.services.performance_monitoring_service import performance_monitor
+        # performance_monitor.stop_monitoring()
+        logger.info("Performance monitoring was disabled")
         
         logger.info("Application shutdown completed successfully")
         
@@ -128,8 +128,9 @@ async def health_check():
     try:
         # Check database connection
         from app.core.database import SessionLocal
+        from sqlalchemy import text
         db = SessionLocal()
-        db.execute("SELECT 1")
+        db.execute(text("SELECT 1"))
         db.close()
         db_status = "healthy"
     except Exception as e:
@@ -138,8 +139,8 @@ async def health_check():
     
     # Check performance monitoring
     try:
-        from app.services.performance_monitoring_service import performance_monitor
-        perf_status = "healthy" if performance_monitor.is_running else "stopped"
+        # Performance monitoring is disabled temporarily
+        perf_status = "disabled"
     except Exception as e:
         logger.error(f"Performance monitoring health check failed: {str(e)}")
         perf_status = "unhealthy"

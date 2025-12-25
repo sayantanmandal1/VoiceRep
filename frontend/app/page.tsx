@@ -49,7 +49,7 @@ export default function Home() {
   };
 
   // Progress steps for the workflow
-  const getProgressSteps = () => [
+  const getProgressSteps = (): { label: string; status: "completed" | "pending" | "current"; description?: string }[] => [
     {
       label: 'Upload Audio',
       status: uploadedFile ? 'completed' : 'current',
@@ -65,7 +65,7 @@ export default function Home() {
       status: (uploadedFile && validatedText) ? 'current' : 'pending',
       description: 'Generate cloned voice'
     }
-  ] as const;
+  ];
 
   return (
     <ErrorBoundary>
