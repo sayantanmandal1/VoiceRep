@@ -116,7 +116,7 @@ class SynthesisResponse(BaseModel):
     queue_position: Optional[int] = Field(None, description="Position in processing queue")
     
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "task_id": "synthesis_task_123",
                 "status": "pending",
