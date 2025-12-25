@@ -1,9 +1,6 @@
 # Kiro specs and configuration
 .kiro/
-
-# Downloads and temporary files
 downloads/
-
 # Python
 __pycache__/
 *.py[cod]
@@ -13,7 +10,6 @@ __pycache__/
 build/
 develop-eggs/
 dist/
-downloads/
 eggs/
 .eggs/
 lib/
@@ -77,6 +73,9 @@ nosetests.xml
 coverage.xml
 *.cover
 .nyc_output
+test-results/
+playwright-report/
+test-results/
 
 # IDE and editors
 .vscode/
@@ -107,24 +106,37 @@ docker-compose.override.yml
 *.ckpt
 *.safetensors
 *.bin
-models/
+models/*
+!models/.gitkeep
 checkpoints/
 
-# Audio files (except test samples)
-*.wav
-*.mp3
-*.flac
-*.m4a
-*.ogg
-*.aac
+# Audio files (except in downloads for testing)
+backend/uploads/*.wav
+backend/uploads/*.mp3
+backend/uploads/*.flac
+backend/uploads/*.m4a
+backend/uploads/*.ogg
+backend/uploads/*.aac
+uploads/*.wav
+uploads/*.mp3
+uploads/*.flac
+uploads/*.m4a
+uploads/*.ogg
+uploads/*.aac
 
-# Video files
-*.mp4
-*.avi
-*.mov
-*.mkv
-*.wmv
-*.flv
+# Video files (except in downloads for testing)
+backend/uploads/*.mp4
+backend/uploads/*.avi
+backend/uploads/*.mov
+backend/uploads/*.mkv
+backend/uploads/*.wmv
+backend/uploads/*.flv
+uploads/*.mp4
+uploads/*.avi
+uploads/*.mov
+uploads/*.mkv
+uploads/*.wmv
+uploads/*.flv
 
 # Temporary and cache files
 tmp/
@@ -147,13 +159,13 @@ pids/
 *.seed
 *.pid.lock
 
-# Uploads and results
+# Uploads and results (keep structure but ignore content)
 uploads/*
 !uploads/.gitkeep
 results/*
 !results/.gitkeep
 
-# Package manager files
+# Package manager files (keep package.json but ignore locks for flexibility)
 package-lock.json
 yarn.lock
 Pipfile.lock
@@ -187,3 +199,35 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+# Redis dump
+dump.rdb
+
+# Backup files
+*.bak
+*.backup
+*.old
+
+# Compiled files
+*.com
+*.class
+*.dll
+*.exe
+*.o
+*.so
+
+# Archives
+*.7z
+*.dmg
+*.gz
+*.iso
+*.jar
+*.rar
+*.tar
+*.zip
+
+# System files
+.fuse_hidden*
+.directory
+.Trash-*
+.nfs*
