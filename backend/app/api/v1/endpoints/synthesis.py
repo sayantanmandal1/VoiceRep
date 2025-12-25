@@ -33,29 +33,63 @@ router = APIRouter()
 synthesis_tasks: Dict[str, Dict[str, Any]] = {}
 
 
-# Mock database functions (replace with actual database operations)
-def get_voice_model_by_id(voice_model_id: str) -> Optional[VoiceModelSchema]:
+def get_voice_model_by_id(voice_model_id: str, db: Session) -> Optional[VoiceModelSchema]:
     """Get voice model from database by ID."""
-    # Extract file ID from voice_model_id (format: voice_model_{file_id})
-    if voice_model_id.startswith("voice_model_"):
-        file_id = voice_model_id.replace("voice_model_", "")
-        return VoiceModelSchema(
-            id=voice_model_id,
-            voice_profile_id=f"profile_{file_id}",
-            reference_audio_id=file_id,
-            model_path=f"/models/{voice_model_id}.pt",
-            voice_characteristics={
-                "fundamental_frequency_range": {"min": 80, "max": 300, "mean": 150},
-                "formant_frequencies": [500, 1500, 2500, 3500],
-                "spectral_characteristics": {"centroid": 2000, "rolloff": 4000},
-                "prosody_parameters": {"speech_rate": 4.0, "pause_frequency": 10.0}
-            },
-            model_type="xtts_v2",
-            quality_score=0.85,
-            status=VoiceModelStatus.READY,
-            created_at=datetime.now()
-        )
-    return None
+    try:
+        # Handle different voice model ID formats
+        if voice_model_id.startswith("voice_model_"):
+            # Extract file ID from voice_model_id (format: voice_model_{file_id})
+            file_id = voice_model_id.replace("voice_model_", "")
+        else:
+            # Assume it's a direct file ID
+            file_id = voice_model_id
+        
+        # Look up voice model by reference audio ID
+        voice_model = db.query(VoiceModel).filter(
+            VoiceModel.reference_audio_id == file_id
+        ).first()
+        
+        if voice_model:
+            return VoiceModelSchema(
+                id=voice_model.id,
+                voice_profile_id=voice_model.voice_profile_id,
+                reference_audio_id=voice_model.reference_audio_id,
+                model_path=voice_model.model_path,
+                voice_characteristics=voice_model.voice_characteristics or {},
+                model_type=voice_model.model_type or "xtts_v2",
+                quality_score=voice_model.quality_score or 0.85,
+                status=voice_model.status,
+                created_at=voice_model.created_at
+            )
+        
+        # If no voice model found, create a temporary one for synthesis
+        reference_audio = db.query(ReferenceAudio).filter(
+            ReferenceAudio.id == file_id
+        ).first()
+        
+        if reference_audio:
+            logger.info(f"Creating temporary voice model for file {file_id}")
+            return VoiceModelSchema(
+                id=f"temp_voice_model_{file_id}",
+                voice_profile_id=f"temp_profile_{file_id}",
+                reference_audio_id=file_id,
+                model_path=reference_audio.file_path,  # Use the reference audio file directly
+                voice_characteristics={
+                    "fundamental_frequency_range": {"min": 80, "max": 300, "mean": 150},
+                    "formant_frequencies": [500, 1500, 2500, 3500],
+                    "spectral_characteristics": {"centroid": 2000, "rolloff": 4000},
+                    "prosody_parameters": {"speech_rate": 4.0, "pause_frequency": 10.0}
+                },
+                model_type="xtts_v2",
+                quality_score=0.75,
+                status=VoiceModelStatus.READY,
+                created_at=datetime.now()
+            )
+        
+        return None
+    except Exception as e:
+        logger.error(f"Error getting voice model: {str(e)}")
+        return None
 
 
 def get_reference_audio_path(file_id: str, db: Session) -> Optional[str]:
@@ -147,7 +181,7 @@ async def create_synthesis_task(
     """
     try:
         # Validate voice model exists and is ready
-        voice_model = get_voice_model_by_id(request.voice_model_id)
+        voice_model = get_voice_model_by_id(request.voice_model_id, db)
         if not voice_model:
             raise HTTPException(
                 status_code=404,
@@ -226,7 +260,8 @@ async def create_synthesis_task(
 @router.post("/synthesize/cross-language", response_model=SynthesisResponse)
 async def create_cross_language_synthesis_task(
     request: CrossLanguageSynthesisRequest,
-    background_tasks: BackgroundTasks
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db)
 ):
     """
     Create a cross-language speech synthesis task.
@@ -240,7 +275,7 @@ async def create_cross_language_synthesis_task(
     """
     try:
         # Validate voice model
-        voice_model = get_voice_model_by_id(request.source_voice_model_id)
+        voice_model = get_voice_model_by_id(request.source_voice_model_id, db)
         if not voice_model:
             raise HTTPException(
                 status_code=404,
@@ -295,7 +330,8 @@ async def create_cross_language_synthesis_task(
 @router.post("/synthesize/batch", response_model=SynthesisResponse)
 async def create_batch_synthesis_task(
     request: BatchSynthesisRequest,
-    background_tasks: BackgroundTasks
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db)
 ):
     """
     Create a batch speech synthesis task.
@@ -310,7 +346,7 @@ async def create_batch_synthesis_task(
     try:
         # Validate all voice models
         for synthesis_request in request.requests:
-            voice_model = get_voice_model_by_id(synthesis_request.voice_model_id)
+            voice_model = get_voice_model_by_id(synthesis_request.voice_model_id, db)
             if not voice_model:
                 raise HTTPException(
                     status_code=404,
@@ -323,7 +359,7 @@ async def create_batch_synthesis_task(
         # Prepare synthesis requests for Celery
         synthesis_requests = []
         for req in request.requests:
-            voice_model = get_voice_model_by_id(req.voice_model_id)
+            voice_model = get_voice_model_by_id(req.voice_model_id, db)
             synthesis_requests.append({
                 "text": req.text,
                 "voice_model_data": voice_model.model_dump(),
@@ -536,7 +572,8 @@ async def download_synthesized_audio(
 @router.post("/optimize/{voice_model_id}")
 async def optimize_voice_model(
     voice_model_id: str,
-    background_tasks: BackgroundTasks
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db)
 ):
     """
     Optimize a voice model for faster synthesis.
@@ -550,7 +587,7 @@ async def optimize_voice_model(
     """
     try:
         # Validate voice model exists
-        voice_model = get_voice_model_by_id(voice_model_id)
+        voice_model = get_voice_model_by_id(voice_model_id, db)
         if not voice_model:
             raise HTTPException(
                 status_code=404,

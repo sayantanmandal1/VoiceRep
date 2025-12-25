@@ -221,7 +221,8 @@ async def list_files(
     
     return [
         FileUploadResponse(
-            file_id=file.id,
+            id=file.id,  # Frontend expects 'id'
+            file_id=file.id,  # Keep for backward compatibility
             filename=file.filename,
             file_size=file.file_size,
             duration=file.duration,
