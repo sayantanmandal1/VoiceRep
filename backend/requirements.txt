@@ -13,18 +13,25 @@ alembic==1.13.1
 redis==5.0.1
 celery==5.3.4
 
-# Audio processing - ESSENTIAL for voice replication
+# Audio processing - ESSENTIAL for advanced voice cloning
 librosa==0.10.1
 soundfile==0.12.1
 scipy==1.11.4
 numpy==1.24.3
 
-# Machine Learning / AI - ESSENTIAL
+# Advanced signal processing for voice matching
+scikit-learn==1.3.2
+
+# Machine Learning / AI - ESSENTIAL for voice cloning
 torch>=2.0.0
 torchaudio>=2.0.0
 
-# TTS and Voice Cloning - CORE FUNCTIONALITY
+# Advanced TTS and Voice Cloning - CORE FUNCTIONALITY
 TTS>=0.24.0
+
+# Additional voice processing libraries
+pyworld==0.3.4
+praat-parselmouth==0.4.3
 
 # Audio processing utilities
 ffmpeg-python==0.2.0

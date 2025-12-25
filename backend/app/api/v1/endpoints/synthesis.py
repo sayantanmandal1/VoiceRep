@@ -20,7 +20,7 @@ from app.schemas.synthesis import (
 from app.schemas.voice import VoiceModelSchema
 from app.core.config import settings
 from app.models.voice import VoiceModel, VoiceModelStatus
-from app.services.real_voice_synthesis_service import real_voice_synthesis_service
+from app.services.real_voice_synthesis_service import advanced_voice_cloning_service
 from app.models.file import ReferenceAudio
 from app.core.database import get_db
 from sqlalchemy.orm import Session
@@ -146,8 +146,8 @@ async def run_real_synthesis_task(
                 synthesis_tasks[task_id]["status"] = message
                 logger.info(f"Task {task_id}: {progress}% - {message}")
         
-        # Perform real voice synthesis
-        result = await real_voice_synthesis_service.synthesize_speech(
+        # Perform advanced voice cloning synthesis
+        result = await advanced_voice_cloning_service.synthesize_speech(
             text=text,
             reference_audio_path=reference_audio_path,
             output_path=str(output_path),
@@ -162,12 +162,12 @@ async def run_real_synthesis_task(
         synthesis_tasks[task_id]["result"] = result
         synthesis_tasks[task_id]["completed_at"] = datetime.now()
         
-        logger.info(f"Real synthesis completed for task {task_id}")
+        logger.info(f"Advanced voice cloning completed for task {task_id}")
         
     except Exception as e:
-        logger.error(f"Real synthesis failed for task {task_id}: {str(e)}")
+        logger.error(f"Advanced voice cloning failed for task {task_id}: {str(e)}")
         if task_id in synthesis_tasks:
-            synthesis_tasks[task_id]["status"] = f"Synthesis failed: {str(e)}"
+            synthesis_tasks[task_id]["status"] = f"Voice cloning failed: {str(e)}"
             synthesis_tasks[task_id]["stage"] = "failed"
             synthesis_tasks[task_id]["error"] = str(e)
 
@@ -206,15 +206,15 @@ async def create_synthesis_task(
                 detail=f"Reference audio file not found for voice model: {request.voice_model_id}"
             )
         
-        # Check if TTS service is ready
-        if not real_voice_synthesis_service.is_model_ready():
+        # Check if advanced voice cloning service is ready
+        if not advanced_voice_cloning_service.is_model_ready():
             # Try to initialize the service
-            logger.info("TTS model not ready, initializing...")
-            success = await real_voice_synthesis_service.initialize_model()
+            logger.info("Advanced voice cloning model not ready, initializing...")
+            success = await advanced_voice_cloning_service.initialize_model()
             if not success:
                 raise HTTPException(
                     status_code=503,
-                    detail="Voice synthesis service is not available. Please try again later."
+                    detail="Advanced voice cloning service is not available. Please try again later."
                 )
         
         # Generate unique synthesis ID
@@ -247,12 +247,12 @@ async def create_synthesis_task(
         estimated_seconds = max(30, len(request.text) * 0.5)  # Real synthesis takes longer
         estimated_completion = datetime.now() + timedelta(seconds=estimated_seconds)
         
-        logger.info(f"Real synthesis task created: {synthesis_id}")
+        logger.info(f"Advanced voice cloning task created: {synthesis_id}")
         
         return SynthesisResponse(
             task_id=synthesis_id,
             status=SynthesisStatus.PENDING,
-            message="Real voice synthesis task created successfully",
+            message="Advanced voice cloning task created successfully",
             estimated_completion=estimated_completion,
             queue_position=1
         )
