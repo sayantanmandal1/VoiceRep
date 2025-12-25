@@ -44,12 +44,15 @@ def get_voice_model_by_id(voice_model_id: str, db: Session) -> Optional[VoiceMod
             # Assume it's a direct file ID
             file_id = voice_model_id
         
+        logger.info(f"Looking for voice model with file_id: {file_id}")
+        
         # Look up voice model by reference audio ID
         voice_model = db.query(VoiceModel).filter(
             VoiceModel.reference_audio_id == file_id
         ).first()
         
         if voice_model:
+            logger.info(f"Found existing voice model for file {file_id}")
             return VoiceModelSchema(
                 id=voice_model.id,
                 voice_profile_id=voice_model.voice_profile_id,
@@ -62,13 +65,19 @@ def get_voice_model_by_id(voice_model_id: str, db: Session) -> Optional[VoiceMod
                 created_at=voice_model.created_at
             )
         
-        # If no voice model found, create a temporary one for synthesis
+        # If no voice model found, look for reference audio and create a temporary voice model
         reference_audio = db.query(ReferenceAudio).filter(
             ReferenceAudio.id == file_id
         ).first()
         
         if reference_audio:
-            logger.info(f"Creating temporary voice model for file {file_id}")
+            logger.info(f"Creating temporary voice model for file {file_id} at path: {reference_audio.file_path}")
+            
+            # Check if the file actually exists
+            if not os.path.exists(reference_audio.file_path):
+                logger.error(f"Reference audio file not found at path: {reference_audio.file_path}")
+                return None
+            
             return VoiceModelSchema(
                 id=f"temp_voice_model_{file_id}",
                 voice_profile_id=f"temp_profile_{file_id}",
@@ -86,6 +95,7 @@ def get_voice_model_by_id(voice_model_id: str, db: Session) -> Optional[VoiceMod
                 created_at=datetime.now()
             )
         
+        logger.error(f"No reference audio found for file_id: {file_id}")
         return None
     except Exception as e:
         logger.error(f"Error getting voice model: {str(e)}")
