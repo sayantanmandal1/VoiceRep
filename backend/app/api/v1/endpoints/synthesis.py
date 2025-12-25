@@ -611,7 +611,7 @@ async def get_synthesis_statistics():
 @router.delete("/task/{task_id}")
 async def cancel_synthesis_task(task_id: str):
     """
-    Cancel a pending or in-progress synthesis task.
+    Cancel a pending or in-progress real synthesis task.
     
     Args:
         task_id: Synthesis task ID to cancel
@@ -621,28 +621,28 @@ async def cancel_synthesis_task(task_id: str):
     """
     try:
         # Check if task exists
-        if task_id not in mock_task_states:
+        if task_id not in synthesis_tasks:
             raise HTTPException(
                 status_code=404,
                 detail=f"Task not found: {task_id}"
             )
         
-        task_state = mock_task_states[task_id]
+        task_state = synthesis_tasks[task_id]
         
-        if task_state['state'] in ['SUCCESS', 'FAILURE']:
+        if task_state['stage'] in ['completed', 'failed']:
             raise HTTPException(
                 status_code=400,
-                detail=f"Cannot cancel completed task (state: {task_state['state']})"
+                detail=f"Cannot cancel completed task (stage: {task_state['stage']})"
             )
         
         # Mark task as cancelled
-        task_state['state'] = 'REVOKED'
+        task_state['stage'] = 'cancelled'
         task_state['status'] = 'Task cancelled by user'
         
         return {
             "task_id": task_id,
             "status": "cancelled",
-            "message": "Synthesis task cancelled successfully"
+            "message": "Real synthesis task cancelled successfully"
         }
         
     except HTTPException:
