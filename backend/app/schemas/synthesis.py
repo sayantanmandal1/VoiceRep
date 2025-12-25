@@ -282,7 +282,7 @@ class SynthesisStats(BaseModel):
     languages_supported: List[str] = Field(..., description="List of supported languages")
     
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "total_syntheses": 1250,
                 "successful_syntheses": 1198,
