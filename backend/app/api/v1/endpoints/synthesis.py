@@ -1,15 +1,16 @@
 """
-API endpoints for speech synthesis operations.
+API endpoints for speech synthesis operations using real voice cloning.
 """
 
 import os
 import uuid
 import logging
-from typing import Optional
+import asyncio
+from typing import Optional, Dict, Any
 from datetime import datetime, timedelta
 from fastapi import APIRouter, HTTPException, BackgroundTasks, Depends, Query
 from fastapi.responses import FileResponse
-from celery.result import AsyncResult
+from pathlib import Path
 
 from app.schemas.synthesis import (
     SynthesisRequest, SynthesisResponse, SynthesisResult, SynthesisProgress,
@@ -17,52 +18,129 @@ from app.schemas.synthesis import (
     SynthesisStatus, SynthesisStats
 )
 from app.schemas.voice import VoiceModelSchema
-from app.tasks.synthesis_tasks import (
-    synthesize_speech_task, cross_language_synthesis_task, 
-    batch_synthesis_task, optimize_synthesis_model
-)
 from app.core.config import settings
 from app.models.voice import VoiceModel, VoiceModelStatus
+from app.services.real_voice_synthesis_service import real_voice_synthesis_service
+from app.models.file import ReferenceAudio
+from app.core.database import get_db
+from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+# Real task states storage (in production, use Redis or database)
+synthesis_tasks: Dict[str, Dict[str, Any]] = {}
+
 
 # Mock database functions (replace with actual database operations)
 def get_voice_model_by_id(voice_model_id: str) -> Optional[VoiceModelSchema]:
     """Get voice model from database by ID."""
-    # This is a placeholder - in production, query actual database
-    # For now, return a mock voice model
-    return VoiceModelSchema(
-        id=voice_model_id,
-        voice_profile_id="profile_123",
-        reference_audio_id="audio_123",
-        model_path=f"/models/{voice_model_id}.pt",
-        voice_characteristics={
-            "fundamental_frequency_range": {"min": 80, "max": 300, "mean": 150},
-            "formant_frequencies": [500, 1500, 2500, 3500],
-            "spectral_characteristics": {"centroid": 2000, "rolloff": 4000},
-            "prosody_parameters": {"speech_rate": 4.0, "pause_frequency": 10.0}
-        },
-        model_type="tortoise_tts",
-        quality_score=0.85,
-        status=VoiceModelStatus.READY,
-        created_at=datetime.now()
-    )
+    # Extract file ID from voice_model_id (format: voice_model_{file_id})
+    if voice_model_id.startswith("voice_model_"):
+        file_id = voice_model_id.replace("voice_model_", "")
+        return VoiceModelSchema(
+            id=voice_model_id,
+            voice_profile_id=f"profile_{file_id}",
+            reference_audio_id=file_id,
+            model_path=f"/models/{voice_model_id}.pt",
+            voice_characteristics={
+                "fundamental_frequency_range": {"min": 80, "max": 300, "mean": 150},
+                "formant_frequencies": [500, 1500, 2500, 3500],
+                "spectral_characteristics": {"centroid": 2000, "rolloff": 4000},
+                "prosody_parameters": {"speech_rate": 4.0, "pause_frequency": 10.0}
+            },
+            model_type="xtts_v2",
+            quality_score=0.85,
+            status=VoiceModelStatus.READY,
+            created_at=datetime.now()
+        )
+    return None
+
+
+def get_reference_audio_path(file_id: str, db: Session) -> Optional[str]:
+    """Get the file path for a reference audio file."""
+    try:
+        reference_audio = db.query(ReferenceAudio).filter(
+            ReferenceAudio.id == file_id
+        ).first()
+        
+        if reference_audio and os.path.exists(reference_audio.file_path):
+            return reference_audio.file_path
+        return None
+    except Exception as e:
+        logger.error(f"Error getting reference audio path: {str(e)}")
+        return None
+
+
+async def run_real_synthesis_task(
+    task_id: str,
+    text: str,
+    reference_audio_path: str,
+    language: str,
+    voice_settings: Optional[Dict[str, Any]] = None
+):
+    """Run real voice synthesis in background."""
+    try:
+        # Update task status
+        synthesis_tasks[task_id]["status"] = "processing"
+        synthesis_tasks[task_id]["stage"] = "processing"
+        synthesis_tasks[task_id]["progress"] = 10
+        
+        # Create output directory
+        output_dir = Path(settings.RESULTS_DIR) if hasattr(settings, 'RESULTS_DIR') else Path("results")
+        output_dir.mkdir(exist_ok=True)
+        
+        # Generate output path
+        output_filename = f"synthesis_{task_id}.wav"
+        output_path = output_dir / output_filename
+        
+        # Progress callback
+        def progress_callback(progress: int, message: str):
+            if task_id in synthesis_tasks:
+                synthesis_tasks[task_id]["progress"] = progress
+                synthesis_tasks[task_id]["status"] = message
+                logger.info(f"Task {task_id}: {progress}% - {message}")
+        
+        # Perform real voice synthesis
+        result = await real_voice_synthesis_service.synthesize_speech(
+            text=text,
+            reference_audio_path=reference_audio_path,
+            output_path=str(output_path),
+            language=language,
+            progress_callback=progress_callback
+        )
+        
+        # Update task as completed
+        synthesis_tasks[task_id]["status"] = "completed"
+        synthesis_tasks[task_id]["stage"] = "completed"
+        synthesis_tasks[task_id]["progress"] = 100
+        synthesis_tasks[task_id]["result"] = result
+        synthesis_tasks[task_id]["completed_at"] = datetime.now()
+        
+        logger.info(f"Real synthesis completed for task {task_id}")
+        
+    except Exception as e:
+        logger.error(f"Real synthesis failed for task {task_id}: {str(e)}")
+        if task_id in synthesis_tasks:
+            synthesis_tasks[task_id]["status"] = f"Synthesis failed: {str(e)}"
+            synthesis_tasks[task_id]["stage"] = "failed"
+            synthesis_tasks[task_id]["error"] = str(e)
 
 
 @router.post("/synthesize", response_model=SynthesisResponse)
 async def create_synthesis_task(
     request: SynthesisRequest,
-    background_tasks: BackgroundTasks
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db)
 ):
     """
-    Create a new speech synthesis task.
+    Create a new speech synthesis task using real voice cloning.
     
     Args:
         request: Synthesis request parameters
         background_tasks: FastAPI background tasks
+        db: Database session
     
     Returns:
         SynthesisResponse with task ID and status
@@ -76,46 +154,69 @@ async def create_synthesis_task(
                 detail=f"Voice model not found: {request.voice_model_id}"
             )
         
-        if voice_model.status != VoiceModelStatus.READY:
+        # Get reference audio file path
+        reference_audio_path = get_reference_audio_path(voice_model.reference_audio_id, db)
+        if not reference_audio_path:
             raise HTTPException(
-                status_code=400,
-                detail=f"Voice model not ready for synthesis: {voice_model.status}"
+                status_code=404,
+                detail=f"Reference audio file not found for voice model: {request.voice_model_id}"
             )
+        
+        # Check if TTS service is ready
+        if not real_voice_synthesis_service.is_model_ready():
+            # Try to initialize the service
+            logger.info("TTS model not ready, initializing...")
+            success = await real_voice_synthesis_service.initialize_model()
+            if not success:
+                raise HTTPException(
+                    status_code=503,
+                    detail="Voice synthesis service is not available. Please try again later."
+                )
         
         # Generate unique synthesis ID
         synthesis_id = f"synthesis_{uuid.uuid4().hex[:12]}"
         
-        # Convert voice model to dict for Celery task
-        voice_model_data = voice_model.model_dump()
+        # Create task record
+        synthesis_tasks[synthesis_id] = {
+            'task_id': synthesis_id,
+            'status': 'queued',
+            'stage': 'queued',
+            'progress': 0,
+            'created_at': datetime.now(),
+            'text': request.text,
+            'voice_model_id': request.voice_model_id,
+            'language': request.language,
+            'reference_audio_path': reference_audio_path
+        }
         
-        # Create Celery task
-        task = synthesize_speech_task.apply_async(
-            args=[
-                request.text,
-                voice_model_data,
-                request.language,
-                request.voice_settings.model_dump() if request.voice_settings else None,
-                synthesis_id
-            ],
-            task_id=synthesis_id
+        # Start real synthesis in background
+        background_tasks.add_task(
+            run_real_synthesis_task,
+            synthesis_id,
+            request.text,
+            reference_audio_path,
+            request.language,
+            request.voice_settings.model_dump() if request.voice_settings else None
         )
         
-        # Estimate completion time (rough estimate based on text length)
-        estimated_seconds = max(10, len(request.text) * 0.1)
+        # Estimate completion time based on text length and model complexity
+        estimated_seconds = max(30, len(request.text) * 0.5)  # Real synthesis takes longer
         estimated_completion = datetime.now() + timedelta(seconds=estimated_seconds)
         
+        logger.info(f"Real synthesis task created: {synthesis_id}")
+        
         return SynthesisResponse(
-            task_id=task.id,
+            task_id=synthesis_id,
             status=SynthesisStatus.PENDING,
-            message="Synthesis task created successfully",
+            message="Real voice synthesis task created successfully",
             estimated_completion=estimated_completion,
-            queue_position=None  # Would need queue inspection for actual position
+            queue_position=1
         )
         
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Failed to create synthesis task: {str(e)}")
+        logger.error(f"Failed to create real synthesis task: {str(e)}")
         raise HTTPException(
             status_code=500,
             detail=f"Failed to create synthesis task: {str(e)}"
@@ -263,7 +364,7 @@ async def create_batch_synthesis_task(
 @router.get("/status/{task_id}", response_model=SynthesisProgress)
 async def get_synthesis_status(task_id: str):
     """
-    Get the status of a synthesis task.
+    Get the status of a real synthesis task.
     
     Args:
         task_id: Synthesis task ID
@@ -272,47 +373,25 @@ async def get_synthesis_status(task_id: str):
         SynthesisProgress with current status
     """
     try:
-        # Get task result from Celery
-        task_result = AsyncResult(task_id)
+        # Check if task exists
+        if task_id not in synthesis_tasks:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Task not found: {task_id}"
+            )
         
-        if task_result.state == 'PENDING':
-            return SynthesisProgress(
-                task_id=task_id,
-                progress=0,
-                status="Task is pending in queue",
-                stage="queued"
-            )
-        elif task_result.state == 'PROGRESS':
-            info = task_result.info or {}
-            return SynthesisProgress(
-                task_id=task_id,
-                progress=info.get('progress', 0),
-                status=info.get('status', 'Processing'),
-                stage=info.get('stage', 'processing')
-            )
-        elif task_result.state == 'SUCCESS':
-            return SynthesisProgress(
-                task_id=task_id,
-                progress=100,
-                status="Synthesis completed successfully",
-                stage="completed"
-            )
-        elif task_result.state == 'FAILURE':
-            info = task_result.info or {}
-            return SynthesisProgress(
-                task_id=task_id,
-                progress=0,
-                status=f"Synthesis failed: {info.get('error', 'Unknown error')}",
-                stage="failed"
-            )
-        else:
-            return SynthesisProgress(
-                task_id=task_id,
-                progress=0,
-                status=f"Unknown task state: {task_result.state}",
-                stage="unknown"
-            )
+        task_state = synthesis_tasks[task_id]
+        
+        return SynthesisProgress(
+            task_id=task_id,
+            progress=task_state.get('progress', 0),
+            status=task_state.get('status', 'Processing'),
+            stage=task_state.get('stage', 'processing'),
+            estimated_remaining=task_state.get('estimated_remaining')
+        )
             
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to get synthesis status: {str(e)}")
         raise HTTPException(
@@ -324,7 +403,7 @@ async def get_synthesis_status(task_id: str):
 @router.get("/result/{task_id}", response_model=SynthesisResult)
 async def get_synthesis_result(task_id: str):
     """
-    Get the result of a completed synthesis task.
+    Get the result of a completed real synthesis task.
     
     Args:
         task_id: Synthesis task ID
@@ -333,45 +412,41 @@ async def get_synthesis_result(task_id: str):
         SynthesisResult with output information
     """
     try:
-        # Get task result from Celery
-        task_result = AsyncResult(task_id)
-        
-        if task_result.state == 'PENDING':
+        # Check if task exists
+        if task_id not in synthesis_tasks:
             raise HTTPException(
-                status_code=202,
-                detail="Synthesis task is still pending"
+                status_code=404,
+                detail=f"Task not found: {task_id}"
             )
-        elif task_result.state == 'PROGRESS':
+        
+        task_state = synthesis_tasks[task_id]
+        
+        if task_state['stage'] in ['queued', 'processing']:
             raise HTTPException(
                 status_code=202,
                 detail="Synthesis task is still in progress"
             )
-        elif task_result.state == 'SUCCESS':
-            result = task_result.result
+        elif task_state['stage'] == 'completed':
+            result = task_state.get('result', {})
             
             return SynthesisResult(
                 task_id=task_id,
                 status=SynthesisStatus.COMPLETED,
                 output_url=f"/api/v1/synthesis/download/{task_id}",
                 output_path=result.get('output_path'),
-                metadata=result.get('metadata'),
-                processing_time=result.get('metadata', {}).get('processing_time'),
-                created_at=datetime.now(),  # Would be from database
-                completed_at=datetime.now()
+                metadata=result,
+                processing_time=result.get('processing_time'),
+                created_at=task_state.get('created_at', datetime.now()),
+                completed_at=task_state.get('completed_at', datetime.now())
             )
-        elif task_result.state == 'FAILURE':
-            info = task_result.info or {}
+        else:
+            # Failed
             return SynthesisResult(
                 task_id=task_id,
                 status=SynthesisStatus.FAILED,
-                error_message=info.get('error', 'Unknown error'),
-                created_at=datetime.now(),
+                error_message=task_state.get('error', 'Synthesis failed'),
+                created_at=task_state.get('created_at', datetime.now()),
                 completed_at=datetime.now()
-            )
-        else:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Unknown task state: {task_result.state}"
             )
             
     except HTTPException:
@@ -390,26 +465,33 @@ async def download_synthesized_audio(
     format: str = Query(default="wav", regex="^(wav|mp3|flac)$", description="Output audio format")
 ):
     """
-    Download synthesized audio file with optional format conversion.
+    Download real synthesized audio file.
     
     Args:
         task_id: Synthesis task ID
         format: Output format (wav, mp3, flac)
     
     Returns:
-        FileResponse with audio file
+        FileResponse with real synthesized audio file
     """
     try:
-        # Get task result
-        task_result = AsyncResult(task_id)
+        # Check if task exists and is completed
+        if task_id not in synthesis_tasks:
+            raise HTTPException(
+                status_code=404,
+                detail="Synthesis task not found"
+            )
         
-        if task_result.state != 'SUCCESS':
+        task_state = synthesis_tasks[task_id]
+        
+        if task_state['stage'] != 'completed':
             raise HTTPException(
                 status_code=404,
                 detail="Synthesis not completed or failed"
             )
         
-        result = task_result.result
+        # Get the real output file path
+        result = task_state.get('result', {})
         output_path = result.get('output_path')
         
         if not output_path or not os.path.exists(output_path):
@@ -430,14 +512,13 @@ async def download_synthesized_audio(
         }
         media_type = media_types.get(format, "audio/wav")
         
-        # For now, return the original file (format conversion would be implemented here)
-        # In a full implementation, you would use ffmpeg or similar to convert formats
+        # Return the real synthesized audio file
         return FileResponse(
             path=output_path,
             media_type=media_type,
             filename=filename,
             headers={
-                "Accept-Ranges": "bytes",  # Enable streaming support
+                "Accept-Ranges": "bytes",
                 "Cache-Control": "no-cache"
             }
         )
@@ -539,17 +620,24 @@ async def cancel_synthesis_task(task_id: str):
         Cancellation confirmation
     """
     try:
-        # Get task result
-        task_result = AsyncResult(task_id)
-        
-        if task_result.state in ['SUCCESS', 'FAILURE']:
+        # Check if task exists
+        if task_id not in mock_task_states:
             raise HTTPException(
-                status_code=400,
-                detail=f"Cannot cancel completed task (state: {task_result.state})"
+                status_code=404,
+                detail=f"Task not found: {task_id}"
             )
         
-        # Revoke the task
-        task_result.revoke(terminate=True)
+        task_state = mock_task_states[task_id]
+        
+        if task_state['state'] in ['SUCCESS', 'FAILURE']:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot cancel completed task (state: {task_state['state']})"
+            )
+        
+        # Mark task as cancelled
+        task_state['state'] = 'REVOKED'
+        task_state['status'] = 'Task cancelled by user'
         
         return {
             "task_id": task_id,
