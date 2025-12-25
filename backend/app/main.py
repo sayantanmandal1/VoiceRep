@@ -11,6 +11,12 @@ from contextlib import asynccontextmanager
 from app.core.config import settings
 from app.core.database import engine, Base
 from app.core.logging_config import setup_logging, get_logger
+from app.core.startup_utils import (
+    suppress_common_warnings,
+    configure_model_cache,
+    check_internet_connectivity,
+    initialize_with_fallback
+)
 from app.core.error_handling import (
     validation_exception_handler,
     file_processing_exception_handler,
@@ -31,6 +37,9 @@ from app.models import (
 )
 from app.models.synthesis import SynthesisTask, SynthesisResult, BatchSynthesisTask
 
+# Suppress common warnings early
+suppress_common_warnings()
+
 # Set up logging first
 setup_logging()
 logger = get_logger("main")
@@ -43,6 +52,13 @@ async def lifespan(app: FastAPI):
     logger.info("Starting Voice Style Replication API")
     
     try:
+        # Configure model cache and environment
+        configure_model_cache()
+        
+        # Check connectivity
+        connectivity = check_internet_connectivity()
+        logger.info(f"Internet connectivity: {'Available' if connectivity else 'Limited/Offline'}")
+        
         # Initialize database
         Base.metadata.create_all(bind=engine)
         logger.info("Database initialized successfully")
@@ -56,13 +72,21 @@ async def lifespan(app: FastAPI):
         # schedule_cleanup_task()
         # logger.info("Cleanup task scheduler started")
         
-        # Initialize real voice synthesis service
+        # Initialize real voice synthesis service with fallback and retry logic
         logger.info("Initializing real voice synthesis service...")
-        voice_service_ready = await initialize_voice_synthesis_service()
-        if voice_service_ready:
-            logger.info("Real voice synthesis service initialized successfully")
-        else:
-            logger.warning("Voice synthesis service initialization failed - synthesis may not work properly")
+        try:
+            voice_service_ready = await initialize_with_fallback(
+                initialize_voice_synthesis_service,
+                max_retries=2,
+                delay=3
+            )
+            if voice_service_ready:
+                logger.info("Real voice synthesis service initialized successfully")
+            else:
+                logger.warning("Voice synthesis service initialization failed - synthesis may not work properly")
+        except Exception as e:
+            logger.error(f"Voice synthesis service failed to initialize after retries: {e}")
+            logger.info("Application will continue with limited functionality")
         
         logger.info("Application startup completed successfully")
         

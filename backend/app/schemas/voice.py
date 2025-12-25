@@ -122,6 +122,7 @@ class VoiceModelSchema(BaseModel):
     
     class Config:
         from_attributes = True
+        protected_namespaces = ()  # Disable protected namespace warnings
 
 
 class VoiceAnalysisRequest(BaseModel):
