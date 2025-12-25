@@ -279,7 +279,8 @@ class AdvancedVoiceCloningService:
             audio = self._enhance_voice_characteristics(audio, sr)
             
             # Save processed audio
-            processed_path = audio_path.replace('.', '_processed.')
+            base_path, ext = os.path.splitext(audio_path)
+            processed_path = f"{base_path}_processed{ext}"
             sf.write(processed_path, audio, sr, format='WAV', subtype='PCM_16')
             
             if progress_callback:
@@ -523,37 +524,14 @@ class AdvancedVoiceCloningService:
     
     def _create_exact_replication_config(self, voice_characteristics: Dict[str, Any]) -> Dict[str, Any]:
         """Create synthesis configuration for exact voice replication."""
+        # Only include parameters that are commonly supported by TTS models
         config = {
-            # High-quality synthesis settings
+            # Basic synthesis settings that are widely supported
             "temperature": 0.1,  # Low temperature for consistency
-            "length_penalty": 1.0,
-            "repetition_penalty": 1.0,
-            "top_k": 50,
-            "top_p": 0.8,
-            "speed": 1.0,
-            
-            # Voice matching parameters
-            "use_original_speaker_embedding": True,
-            "speaker_conditioning_strength": 1.0,
-            "prosody_conditioning_strength": 1.0,
-            
-            # Quality settings
-            "enable_text_splitting": True,
-            "sentence_split": True,
-            "use_deepspeed": False,  # For stability
-            "half_precision": False,  # Full precision for quality
         }
         
-        # Adjust based on voice characteristics
-        if voice_characteristics.get("prosodic_patterns"):
-            prosody = voice_characteristics["prosodic_patterns"]
-            config["speed"] = max(0.5, min(2.0, prosody.get("speech_rate", 4.0) / 4.0))
-        
-        if voice_characteristics.get("emotional_markers"):
-            emotion = voice_characteristics["emotional_markers"]
-            # Adjust synthesis parameters based on emotional characteristics
-            if emotion.get("emotional_arousal", 0) > 0.5:
-                config["temperature"] = min(0.3, config["temperature"] + 0.1)
+        # Only add parameters that we know are supported
+        # Most other parameters will be handled by the model's default configuration
         
         return config
     
@@ -766,21 +744,6 @@ class AdvancedVoiceCloningService:
         """Check if the synthesis service is ready."""
         return self.tts_model is not None or self.voice_clone_model is not None
 
-
-# Global service instance
-advanced_voice_cloning_service = AdvancedVoiceCloningService()
-
-
-async def initialize_voice_synthesis_service():
-    """Initialize the advanced voice cloning service."""
-    try:
-        logger.info("Initializing Advanced Voice Cloning Service...")
-        success = await advanced_voice_cloning_service.initialize_model()
-        logger.info("Advanced Voice Cloning Service initialized successfully")
-        return success
-    except Exception as e:
-        logger.error(f"Advanced voice cloning service initialization error: {str(e)}")
-        raise RuntimeError(f"Failed to initialize advanced voice cloning service: {str(e)}")
     async def extract_deep_voice_characteristics(
         self, 
         audio_path: str, 
@@ -1219,3 +1182,19 @@ async def initialize_voice_synthesis_service():
             "voice_warmth": float(1.0 - (spectral_centroid / 4000)),
             "confidence_level": float(min(1.0, energy_mean * 5 + pitch_mean / 300))
         }
+
+
+# Global service instance
+advanced_voice_cloning_service = AdvancedVoiceCloningService()
+
+
+async def initialize_voice_synthesis_service():
+    """Initialize the advanced voice cloning service."""
+    try:
+        logger.info("Initializing Advanced Voice Cloning Service...")
+        success = await advanced_voice_cloning_service.initialize_model()
+        logger.info("Advanced Voice Cloning Service initialized successfully")
+        return success
+    except Exception as e:
+        logger.error(f"Advanced voice cloning service initialization error: {str(e)}")
+        raise RuntimeError(f"Failed to initialize advanced voice cloning service: {str(e)}")
