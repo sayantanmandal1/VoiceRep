@@ -21,22 +21,36 @@ router = APIRouter()
 
 @router.post("/create", response_model=SessionResponse)
 async def create_session(
-    request: SessionCreateRequest,
-    req: Request,
+    request: Optional[SessionCreateRequest] = None,
+    req: Request = None,
     db: Session = Depends(get_db)
 ):
     """Create a new user session."""
     session_service = SessionService(db)
     
-    user_identifier = request.user_identifier or f"anonymous_{datetime.utcnow().timestamp()}"
-    user_agent = req.headers.get("User-Agent")
-    ip_address = req.headers.get("X-Forwarded-For", req.client.host if req.client else "unknown")
+    user_identifier = (request.user_identifier if request else None) or f"anonymous_{datetime.utcnow().timestamp()}"
+    user_agent = req.headers.get("User-Agent") if req else None
+    ip_address = req.headers.get("X-Forwarded-For", req.client.host if req and req.client else "unknown") if req else "unknown"
     
     session = session_service.create_session(
         user_identifier=user_identifier,
         user_agent=user_agent,
         ip_address=ip_address
     )
+    
+    return SessionResponse.from_orm(session)
+
+
+@router.get("/info", response_model=SessionResponse)
+async def get_session_info(
+    session: UserSession = Depends(get_current_session)
+):
+    """Get current session information without requiring authentication."""
+    if not session:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="No active session"
+        )
     
     return SessionResponse.from_orm(session)
 

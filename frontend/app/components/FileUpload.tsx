@@ -162,8 +162,15 @@ export default function FileUpload({ onFileUploaded, onError }: FileUploadProps)
               const progressValue = Math.min(95, 20 + (processingAttempts / maxProcessingAttempts) * 75);
               updateProgress('processing', progressValue);
             }
-          } catch (statusError) {
-            // If status check fails, continue with estimated progress
+          } catch (statusError: any) {
+            console.warn('File status check failed:', statusError.message);
+            
+            // If this is an authentication error, we should fail the upload
+            if (statusError.message.includes('401') || statusError.message.includes('unauthorized')) {
+              throw new Error('Authentication failed during file processing. Please try uploading again.');
+            }
+            
+            // For other errors, continue with estimated progress
             const progressValue = Math.min(95, 20 + (processingAttempts / maxProcessingAttempts) * 75);
             updateProgress('processing', progressValue);
           }

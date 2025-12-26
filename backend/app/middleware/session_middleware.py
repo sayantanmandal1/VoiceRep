@@ -46,8 +46,8 @@ class SessionMiddleware(BaseHTTPMiddleware):
             
             # Create new session if none exists or token is invalid
             if not user_session:
-                if self.require_session and request.method != "GET":
-                    # For non-GET requests, require valid session
+                if self.require_session:
+                    # Always create session for authenticated endpoints
                     user_identifier = self._get_user_identifier(request)
                     user_session = session_service.create_session(
                         user_identifier=user_identifier,
@@ -55,7 +55,7 @@ class SessionMiddleware(BaseHTTPMiddleware):
                         ip_address=self._get_client_ip(request)
                     )
                 elif not self.require_session:
-                    # Create anonymous session for GET requests
+                    # Create anonymous session for non-authenticated endpoints
                     user_identifier = self._get_user_identifier(request)
                     user_session = session_service.create_session(
                         user_identifier=user_identifier,

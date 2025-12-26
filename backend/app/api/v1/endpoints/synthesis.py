@@ -23,6 +23,8 @@ from app.models.voice import VoiceModel, VoiceModelStatus
 from app.services.real_voice_synthesis_service import advanced_voice_cloning_service
 from app.models.file import ReferenceAudio
 from app.core.database import get_db
+from app.middleware.session_middleware import require_session
+from app.models.session import UserSession
 from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
