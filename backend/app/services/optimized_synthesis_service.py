@@ -426,21 +426,60 @@ class OptimizedSynthesisService:
                 reference_audio_path = None  # Would need actual implementation
                 
                 # Synthesize with the model
-                if hasattr(model, 'tts_to_file'):
-                    model.tts_to_file(
-                        text=text,
-                        speaker_wav=reference_audio_path,
-                        language=language,
-                        file_path=temp_output_path
-                    )
-                else:
-                    # Fallback synthesis
-                    audio_data = model.tts(
-                        text=text,
-                        speaker_wav=reference_audio_path,
-                        language=language
-                    )
-                    sf.write(temp_output_path, audio_data, 22050)
+                synthesis_kwargs = {
+                    "text": text,
+                    "language": language
+                }
+                
+                # Add reference audio if available
+                if reference_audio_path and os.path.exists(reference_audio_path):
+                    synthesis_kwargs["speaker_wav"] = reference_audio_path
+                
+                try:
+                    if hasattr(model, 'tts_to_file'):
+                        model.tts_to_file(file_path=temp_output_path, **synthesis_kwargs)
+                    else:
+                        # Fallback synthesis
+                        audio_data = model.tts(**synthesis_kwargs)
+                        sf.write(temp_output_path, audio_data, 22050)
+                        
+                except Exception as synthesis_error:
+                    if "multi-speaker" in str(synthesis_error).lower() or "speaker" in str(synthesis_error).lower():
+                        logger.info("Model is multi-speaker, trying with default speaker")
+                        
+                        # Try with default speaker configurations
+                        speaker_options = [
+                            {"speaker": "default"},
+                            {"speaker": "p225"},  # Common VCTK speaker
+                            {"speaker": "ljspeech"},  # Common single speaker
+                            {"speaker_idx": 0},  # Speaker index
+                        ]
+                        
+                        synthesis_success = False
+                        for speaker_config in speaker_options:
+                            try:
+                                # Create new kwargs with speaker config
+                                speaker_kwargs = synthesis_kwargs.copy()
+                                speaker_kwargs.update(speaker_config)
+                                
+                                if hasattr(model, 'tts_to_file'):
+                                    model.tts_to_file(file_path=temp_output_path, **speaker_kwargs)
+                                else:
+                                    audio_data = model.tts(**speaker_kwargs)
+                                    sf.write(temp_output_path, audio_data, 22050)
+                                
+                                synthesis_success = True
+                                logger.info(f"Synthesis successful with speaker config: {speaker_config}")
+                                break
+                                
+                            except Exception as config_error:
+                                logger.debug(f"Speaker config {speaker_config} failed: {config_error}")
+                                continue
+                        
+                        if not synthesis_success:
+                            raise synthesis_error  # Re-raise original error if all configs fail
+                    else:
+                        raise synthesis_error  # Re-raise if not a speaker-related error
                 
                 # Generate final output path
                 timestamp = int(time.time())
@@ -644,11 +683,12 @@ class OptimizedSynthesisService:
             if self.device.type == 'cuda':
                 try:
                     # Create dummy voice profile for warm-up
+                    from datetime import datetime
                     dummy_profile = VoiceProfileSchema(
                         id="warmup",
                         reference_audio_id="warmup",
                         quality_score=0.8,
-                        created_at=time.time()
+                        created_at=datetime.now()
                     )
                     
                     # Run quick warm-up synthesis
@@ -660,6 +700,7 @@ class OptimizedSynthesisService:
                     
                 except Exception as e:
                     logger.warning(f"Warm-up synthesis failed: {e}")
+                    # Don't fail initialization if warm-up fails
             
             if progress_callback:
                 progress_callback(100, "Model warm-up complete")

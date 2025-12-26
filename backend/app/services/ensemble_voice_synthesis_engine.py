@@ -590,7 +590,7 @@ class EnsembleVoiceSynthesizer:
             error_msg = str(e).lower()
             
             # Handle specific error cases
-            if "invalid load key" in error_msg or "corrupted" in error_msg:
+            if "invalid load key" in error_msg or "corrupted" in error_msg or "text_2.pt" in error_msg:
                 logger.warning(f"Model {model_type.value} appears corrupted, attempting to clear cache and retry...")
                 try:
                     # Clear the model cache for this specific model
@@ -598,16 +598,47 @@ class EnsembleVoiceSynthesizer:
                     from pathlib import Path
                     
                     # Try to find and remove corrupted model files
-                    cache_dir = Path.home() / ".cache" / "tts"
-                    model_cache_dirs = list(cache_dir.glob(f"*{model_type.value}*"))
+                    cache_locations = [
+                        Path.home() / ".cache" / "tts",
+                        Path.home() / "AppData" / "Local" / "tts"
+                    ]
                     
-                    for cache_dir_path in model_cache_dirs:
-                        if cache_dir_path.is_dir():
-                            logger.info(f"Removing corrupted cache: {cache_dir_path}")
-                            shutil.rmtree(cache_dir_path, ignore_errors=True)
+                    # More comprehensive cache clearing for Bark model
+                    if model_type == TTSModelType.BARK:
+                        bark_cache_patterns = [
+                            "*bark*",
+                            "*multilingual*multi-dataset*bark*",
+                            "tts_models--multilingual--multi-dataset--bark"
+                        ]
+                        
+                        for cache_dir in cache_locations:
+                            if not cache_dir.exists():
+                                continue
+                                
+                            for pattern in bark_cache_patterns:
+                                model_cache_dirs = list(cache_dir.glob(pattern))
+                                for cache_dir_path in model_cache_dirs:
+                                    if cache_dir_path.is_dir():
+                                        logger.info(f"Removing corrupted Bark cache: {cache_dir_path}")
+                                        shutil.rmtree(cache_dir_path, ignore_errors=True)
+                            
+                            # Also check for specific Bark model files
+                            bark_specific_dir = cache_dir / "tts_models--multilingual--multi-dataset--bark"
+                            if bark_specific_dir.exists():
+                                logger.info(f"Removing Bark model directory: {bark_specific_dir}")
+                                shutil.rmtree(bark_specific_dir, ignore_errors=True)
+                    else:
+                        # General cache clearing for other models
+                        for cache_dir in cache_locations:
+                            if not cache_dir.exists():
+                                continue
+                            model_cache_dirs = list(cache_dir.glob(f"*{model_type.value}*"))
+                            for cache_dir_path in model_cache_dirs:
+                                if cache_dir_path.is_dir():
+                                    logger.info(f"Removing corrupted cache: {cache_dir_path}")
+                                    shutil.rmtree(cache_dir_path, ignore_errors=True)
                     
-                    # Don't retry automatically to avoid infinite loops
-                    logger.warning(f"Cache cleared for {model_type.value}. Manual restart may be needed.")
+                    logger.warning(f"Cache cleared for {model_type.value}. Model will be re-downloaded on next startup.")
                     
                 except Exception as cleanup_error:
                     logger.error(f"Failed to cleanup corrupted model cache: {cleanup_error}")
@@ -692,9 +723,56 @@ class EnsembleVoiceSynthesizer:
                     output_dir.mkdir(exist_ok=True)
                     output_path = output_dir / f"ensemble_synthesis_{int(time.time())}.wav"
                     
-                    # Basic synthesis without reference audio
-                    wav = model.tts(text=text, language=language)
-                    model.tts_to_file(text=text, file_path=str(output_path), language=language)
+                    # Basic synthesis without reference audio - handle multi-speaker models
+                    synthesis_kwargs = {
+                        "text": text,
+                        "language": language
+                    }
+                    
+                    # Check if model is multi-speaker and handle accordingly
+                    try:
+                        # Try basic synthesis first
+                        if hasattr(model, 'tts_to_file'):
+                            model.tts_to_file(file_path=str(output_path), **synthesis_kwargs)
+                        else:
+                            wav = model.tts(**synthesis_kwargs)
+                            sf.write(str(output_path), wav, self.sample_rate)
+                    except Exception as speaker_error:
+                        if "multi-speaker" in str(speaker_error).lower() or "speaker" in str(speaker_error).lower():
+                            logger.info(f"Model {model_type.value} is multi-speaker, trying with default speaker")
+                            
+                            # Try with default speaker configurations
+                            speaker_options = [
+                                {"speaker": "default"},
+                                {"speaker": "p225"},  # Common VCTK speaker
+                                {"speaker": "ljspeech"},  # Common single speaker
+                                {"speaker_idx": 0},  # Speaker index
+                                {"speaker_wav": None}  # Explicit None
+                            ]
+                            
+                            synthesis_success = False
+                            for speaker_config in speaker_options:
+                                try:
+                                    synthesis_kwargs.update(speaker_config)
+                                    
+                                    if hasattr(model, 'tts_to_file'):
+                                        model.tts_to_file(file_path=str(output_path), **synthesis_kwargs)
+                                    else:
+                                        wav = model.tts(**synthesis_kwargs)
+                                        sf.write(str(output_path), wav, self.sample_rate)
+                                    
+                                    synthesis_success = True
+                                    logger.info(f"Synthesis successful with speaker config: {speaker_config}")
+                                    break
+                                    
+                                except Exception as config_error:
+                                    logger.debug(f"Speaker config {speaker_config} failed: {config_error}")
+                                    continue
+                            
+                            if not synthesis_success:
+                                raise speaker_error  # Re-raise original error if all configs fail
+                        else:
+                            raise speaker_error  # Re-raise if not a speaker-related error
                     
                     if progress_callback:
                         progress_callback(100, "Synthesis completed without reference")
@@ -874,24 +952,62 @@ class EnsembleVoiceSynthesizer:
                 temp_output_path = tmp_file.name
             
             # Synthesize with the model
-            if hasattr(model, 'tts_to_file'):
-                # For models that support file output
-                model.tts_to_file(
-                    text=text,
-                    speaker_wav=reference_audio_path,
-                    language=language,
-                    file_path=temp_output_path
-                )
-            else:
-                # For models that return audio data
-                audio_data = model.tts(
-                    text=text,
-                    speaker_wav=reference_audio_path,
-                    language=language
-                )
-                
-                # Save to temporary file
-                sf.write(temp_output_path, audio_data, self.sample_rate)
+            synthesis_kwargs = {
+                "text": text,
+                "language": language
+            }
+            
+            # Add reference audio if available
+            if reference_audio_path and os.path.exists(reference_audio_path):
+                synthesis_kwargs["speaker_wav"] = reference_audio_path
+            
+            try:
+                if hasattr(model, 'tts_to_file'):
+                    # For models that support file output
+                    model.tts_to_file(file_path=temp_output_path, **synthesis_kwargs)
+                else:
+                    # For models that return audio data
+                    audio_data = model.tts(**synthesis_kwargs)
+                    # Save to temporary file
+                    sf.write(temp_output_path, audio_data, self.sample_rate)
+                    
+            except Exception as synthesis_error:
+                if "multi-speaker" in str(synthesis_error).lower() or "speaker" in str(synthesis_error).lower():
+                    logger.info(f"Model {model_type.value} is multi-speaker, trying with default speaker")
+                    
+                    # Try with default speaker configurations
+                    speaker_options = [
+                        {"speaker": "default"},
+                        {"speaker": "p225"},  # Common VCTK speaker
+                        {"speaker": "ljspeech"},  # Common single speaker
+                        {"speaker_idx": 0},  # Speaker index
+                    ]
+                    
+                    synthesis_success = False
+                    for speaker_config in speaker_options:
+                        try:
+                            # Create new kwargs with speaker config
+                            speaker_kwargs = synthesis_kwargs.copy()
+                            speaker_kwargs.update(speaker_config)
+                            
+                            if hasattr(model, 'tts_to_file'):
+                                model.tts_to_file(file_path=temp_output_path, **speaker_kwargs)
+                            else:
+                                audio_data = model.tts(**speaker_kwargs)
+                                sf.write(temp_output_path, audio_data, self.sample_rate)
+                            
+                            synthesis_success = True
+                            logger.info(f"Synthesis successful with speaker config: {speaker_config}")
+                            break
+                            
+                        except Exception as config_error:
+                            logger.debug(f"Speaker config {speaker_config} failed: {config_error}")
+                            continue
+                    
+                    if not synthesis_success:
+                        raise synthesis_error  # Re-raise original error if all configs fail
+                else:
+                    raise synthesis_error  # Re-raise if not a speaker-related error
             
             # Load the generated audio
             audio_data, sr = librosa.load(temp_output_path, sr=self.sample_rate)
