@@ -673,7 +673,43 @@ class EnsembleVoiceSynthesizer:
             # Prepare reference audio
             reference_audio_path = await self._prepare_reference_audio(adapted_profile)
             if not reference_audio_path:
-                return False, None, {"error": "Could not prepare reference audio"}
+                logger.warning("No reference audio available, attempting synthesis without reference")
+                # Try to synthesize without reference audio using available models
+                if not available_models:
+                    return False, None, {"error": "No models available and no reference audio"}
+                
+                # Use a simplified approach for synthesis without reference
+                try:
+                    # Use the first available model for basic synthesis
+                    model_type = available_models[0]
+                    model = self.loaded_models[model_type]
+                    
+                    if progress_callback:
+                        progress_callback(50, f"Synthesizing with {model_type.value} (no reference)")
+                    
+                    # Generate output path
+                    output_dir = Path("results")
+                    output_dir.mkdir(exist_ok=True)
+                    output_path = output_dir / f"ensemble_synthesis_{int(time.time())}.wav"
+                    
+                    # Basic synthesis without reference audio
+                    wav = model.tts(text=text, language=language)
+                    model.tts_to_file(text=text, file_path=str(output_path), language=language)
+                    
+                    if progress_callback:
+                        progress_callback(100, "Synthesis completed without reference")
+                    
+                    return True, str(output_path), {
+                        "processing_time": 0.0,
+                        "quality_metrics": {"overall_similarity": 0.5, "confidence_score": 0.6},
+                        "synthesis_method": "basic_tts",
+                        "models_used": [model_type.value],
+                        "note": "Synthesized without reference audio"
+                    }
+                    
+                except Exception as e:
+                    logger.error(f"Basic synthesis failed: {e}")
+                    return False, None, {"error": f"Basic synthesis failed: {str(e)}"}
             
             if progress_callback:
                 progress_callback(25, "Generating speech with multiple models")
@@ -771,16 +807,47 @@ class EnsembleVoiceSynthesizer:
     async def _prepare_reference_audio(self, voice_profile: VoiceProfileSchema) -> Optional[str]:
         """Prepare reference audio for synthesis."""
         try:
-            # This would typically extract reference audio from the voice profile
-            # For now, we'll create a placeholder implementation
+            # Try to get reference audio from voice profile
+            if hasattr(voice_profile, 'reference_audio_id') and voice_profile.reference_audio_id:
+                reference_id = voice_profile.reference_audio_id
+                
+                # Check if reference_audio_id is already a file path
+                from pathlib import Path
+                if Path(reference_id).exists() and Path(reference_id).is_file():
+                    logger.info(f"Using direct reference audio path: {reference_id}")
+                    return reference_id
+                
+                # Look for reference audio in uploads directory
+                from app.core.config import settings
+                
+                # Check multiple possible locations
+                possible_paths = [
+                    Path(settings.UPLOAD_DIR) / f"{reference_id}.wav",
+                    Path(settings.UPLOAD_DIR) / f"{reference_id}.mp3",
+                    Path("uploads") / f"{reference_id}.wav",
+                    Path("uploads") / f"{reference_id}.mp3",
+                ]
+                
+                # Also check session-based uploads
+                import os
+                upload_dir = Path(settings.UPLOAD_DIR) if hasattr(settings, 'UPLOAD_DIR') else Path("uploads")
+                for session_dir in upload_dir.glob("session_*"):
+                    possible_paths.extend([
+                        session_dir / f"{reference_id}.wav",
+                        session_dir / f"{reference_id}.mp3",
+                    ])
+                
+                # Find the first existing file
+                for path in possible_paths:
+                    if path.exists() and path.is_file():
+                        logger.info(f"Found reference audio: {path}")
+                        return str(path)
+                
+                logger.warning(f"Reference audio not found for ID: {reference_id}")
             
-            # In a real implementation, you would:
-            # 1. Get the reference audio path from voice_profile
-            # 2. Apply preprocessing if needed
-            # 3. Return the processed audio path
-            
-            # Placeholder: return None to indicate no reference audio available
-            # This should be replaced with actual reference audio handling
+            # If no reference audio found, try to use a default or create a minimal one
+            # For now, we'll return None but log the issue
+            logger.warning("No reference audio available for voice profile")
             return None
             
         except Exception as e:

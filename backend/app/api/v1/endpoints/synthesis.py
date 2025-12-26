@@ -202,7 +202,7 @@ async def run_enhanced_synthesis_task_async(
             
             voice_profile = VoiceProfileSchema(
                 id=f"temp_profile_{task_id}",
-                reference_audio_id=task_id,
+                reference_audio_id=reference_audio_path,  # Use the actual path instead of task_id
                 voice_characteristics={
                     "fundamental_frequency_range": {"min": 80, "max": 300, "mean": 150},
                     "formant_frequencies": [500, 1500, 2500, 3500],
@@ -216,7 +216,13 @@ async def run_enhanced_synthesis_task_async(
             # Temporarily copy reference audio to expected location for voice profile
             import shutil
             temp_audio_path = output_dir / f"temp_ref_{task_id}.wav"
-            shutil.copy2(reference_audio_path, temp_audio_path)
+            try:
+                shutil.copy2(reference_audio_path, temp_audio_path)
+                logger.info(f"Copied reference audio to: {temp_audio_path}")
+            except Exception as copy_error:
+                logger.warning(f"Failed to copy reference audio: {copy_error}")
+                # Use original path directly
+                temp_audio_path = Path(reference_audio_path)
             
             try:
                 success, result_path, metadata = await ensemble_voice_synthesizer.synthesize_speech_ensemble(
@@ -241,7 +247,9 @@ async def run_enhanced_synthesis_task_async(
                         "recommendations": metadata.get("recommendations", [])
                     }
                 else:
-                    raise Exception("Ensemble synthesis failed")
+                    error_msg = "Ensemble synthesis failed - no result returned"
+                    logger.error(f"Task {task_id}: {error_msg}")
+                    raise Exception(error_msg)
                     
             finally:
                 # Clean up temporary files
@@ -383,7 +391,7 @@ async def create_synthesis_task(
         
         # Start enhanced synthesis in background
         background_tasks.add_task(
-            run_enhanced_synthesis_task,
+            run_enhanced_synthesis_task_sync,
             synthesis_id,
             request.text,
             reference_audio_path,

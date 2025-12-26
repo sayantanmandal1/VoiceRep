@@ -613,12 +613,17 @@ class ConcurrentProcessingManager:
                     }
                 
                 try:
-                    # Execute task in thread pool
-                    loop = asyncio.get_event_loop()
-                    result = await loop.run_in_executor(
-                        self.synthesis_executor,
-                        lambda: task_func(*args, **kwargs)
-                    )
+                    # Check if task_func is async
+                    if asyncio.iscoroutinefunction(task_func):
+                        # Execute async task directly
+                        result = await task_func(*args, **kwargs)
+                    else:
+                        # Execute sync task in thread pool
+                        loop = asyncio.get_event_loop()
+                        result = await loop.run_in_executor(
+                            self.synthesis_executor,
+                            lambda: task_func(*args, **kwargs)
+                        )
                     
                     processing_time = time.time() - start_time
                     logger.debug(f"Synthesis task {task_id} completed in {processing_time:.2f}s")
