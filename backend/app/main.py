@@ -30,6 +30,9 @@ from app.middleware.session_middleware import setup_session_middleware
 # from app.services.cleanup_service import schedule_cleanup_task
 from app.services.real_voice_synthesis_service import initialize_voice_synthesis_service
 from app.services.ensemble_voice_synthesis_engine import initialize_ensemble_synthesis_service
+from app.services.performance_optimization_service import initialize_performance_optimization
+from app.services.optimized_voice_analysis_service import initialize_optimized_voice_analysis
+from app.services.optimized_synthesis_service import initialize_optimized_synthesis
 
 # Import models to ensure they are registered with Base
 from app.models import (
@@ -104,6 +107,52 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.error(f"Ensemble synthesis service failed to initialize after retries: {e}")
             logger.info("Application will continue with single model synthesis")
+        
+        # Initialize performance optimization service
+        logger.info("Initializing performance optimization service...")
+        try:
+            perf_service_ready = await initialize_with_fallback(
+                initialize_performance_optimization,
+                max_retries=1,
+                delay=2
+            )
+            if perf_service_ready:
+                logger.info("Performance optimization service initialized successfully")
+            else:
+                logger.warning("Performance optimization service initialization failed - performance features may be limited")
+        except Exception as e:
+            logger.error(f"Performance optimization service failed to initialize: {e}")
+            logger.info("Application will continue with basic performance")
+        
+        # Initialize optimized voice analysis service
+        logger.info("Initializing optimized voice analysis service...")
+        try:
+            analysis_service_ready = await initialize_with_fallback(
+                initialize_optimized_voice_analysis,
+                max_retries=1,
+                delay=1
+            )
+            if analysis_service_ready:
+                logger.info("Optimized voice analysis service initialized successfully")
+            else:
+                logger.warning("Optimized voice analysis service initialization failed")
+        except Exception as e:
+            logger.error(f"Optimized voice analysis service failed to initialize: {e}")
+        
+        # Initialize optimized synthesis service
+        logger.info("Initializing optimized synthesis service...")
+        try:
+            synthesis_service_ready = await initialize_with_fallback(
+                initialize_optimized_synthesis,
+                max_retries=1,
+                delay=1
+            )
+            if synthesis_service_ready:
+                logger.info("Optimized synthesis service initialized successfully")
+            else:
+                logger.warning("Optimized synthesis service initialization failed")
+        except Exception as e:
+            logger.error(f"Optimized synthesis service failed to initialize: {e}")
         
         logger.info("Application startup completed successfully")
         
