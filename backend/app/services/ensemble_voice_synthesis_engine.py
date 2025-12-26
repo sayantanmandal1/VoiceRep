@@ -587,6 +587,31 @@ class EnsembleVoiceSynthesizer:
             return True
             
         except Exception as e:
+            error_msg = str(e).lower()
+            
+            # Handle specific error cases
+            if "invalid load key" in error_msg or "corrupted" in error_msg:
+                logger.warning(f"Model {model_type.value} appears corrupted, attempting to clear cache and retry...")
+                try:
+                    # Clear the model cache for this specific model
+                    import shutil
+                    from pathlib import Path
+                    
+                    # Try to find and remove corrupted model files
+                    cache_dir = Path.home() / ".cache" / "tts"
+                    model_cache_dirs = list(cache_dir.glob(f"*{model_type.value}*"))
+                    
+                    for cache_dir_path in model_cache_dirs:
+                        if cache_dir_path.is_dir():
+                            logger.info(f"Removing corrupted cache: {cache_dir_path}")
+                            shutil.rmtree(cache_dir_path, ignore_errors=True)
+                    
+                    # Don't retry automatically to avoid infinite loops
+                    logger.warning(f"Cache cleared for {model_type.value}. Manual restart may be needed.")
+                    
+                except Exception as cleanup_error:
+                    logger.error(f"Failed to cleanup corrupted model cache: {cleanup_error}")
+            
             logger.error(f"Failed to load {model_type.value}: {e}")
             self.model_load_status[model_type] = False
             return False

@@ -117,7 +117,41 @@ def get_reference_audio_path(file_id: str, db: Session) -> Optional[str]:
         return None
 
 
-async def run_enhanced_synthesis_task(
+def run_enhanced_synthesis_task_sync(
+    task_id: str,
+    text: str,
+    reference_audio_path: str,
+    language: str,
+    voice_settings: Optional[Dict[str, Any]] = None
+):
+    """Synchronous wrapper for the async synthesis task."""
+    import asyncio
+    
+    try:
+        # Create new event loop for this thread
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        # Run the async task
+        loop.run_until_complete(
+            run_enhanced_synthesis_task_async(
+                task_id, text, reference_audio_path, language, voice_settings
+            )
+        )
+    except Exception as e:
+        logger.error(f"Synthesis task {task_id} failed: {str(e)}")
+        if task_id in synthesis_tasks:
+            synthesis_tasks[task_id]["status"] = "failed"
+            synthesis_tasks[task_id]["error"] = str(e)
+    finally:
+        # Clean up the event loop
+        try:
+            loop.close()
+        except Exception:
+            pass
+
+
+async def run_enhanced_synthesis_task_async(
     task_id: str,
     text: str,
     reference_audio_path: str,

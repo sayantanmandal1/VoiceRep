@@ -14,8 +14,28 @@ from pathlib import Path
 from app.core.config import settings
 
 
+class DateTimeEncoder(json.JSONEncoder):
+    """Custom JSON encoder for datetime objects."""
+    
+    def default(self, obj):
+        if isinstance(obj, datetime):
+            return obj.isoformat()
+        return super().default(obj)
+
+
 class JSONFormatter(logging.Formatter):
     """Custom JSON formatter for structured logging."""
+    
+    def _serialize_value(self, value):
+        """Recursively serialize values, handling datetime objects."""
+        if isinstance(value, datetime):
+            return value.isoformat()
+        elif isinstance(value, dict):
+            return {k: self._serialize_value(v) for k, v in value.items()}
+        elif isinstance(value, (list, tuple)):
+            return [self._serialize_value(item) for item in value]
+        else:
+            return value
     
     def format(self, record: logging.LogRecord) -> str:
         """Format log record as JSON."""
@@ -29,7 +49,7 @@ class JSONFormatter(logging.Formatter):
             "line": record.lineno,
         }
         
-        # Add extra fields if present
+        # Add extra fields if present, serializing datetime objects
         if hasattr(record, 'request_id'):
             log_entry['request_id'] = record.request_id
         
@@ -43,10 +63,10 @@ class JSONFormatter(logging.Formatter):
             log_entry['task_id'] = record.task_id
         
         if hasattr(record, 'error_info'):
-            log_entry['error_info'] = record.error_info
+            log_entry['error_info'] = self._serialize_value(record.error_info)
         
         if hasattr(record, 'performance_metrics'):
-            log_entry['performance_metrics'] = record.performance_metrics
+            log_entry['performance_metrics'] = self._serialize_value(record.performance_metrics)
         
         # Add exception information if present
         if record.exc_info:
@@ -56,7 +76,14 @@ class JSONFormatter(logging.Formatter):
                 'traceback': self.formatException(record.exc_info)
             }
         
-        return json.dumps(log_entry, ensure_ascii=False)
+        try:
+            return json.dumps(log_entry, ensure_ascii=False, cls=DateTimeEncoder)
+        except (TypeError, ValueError) as e:
+            # Fallback to string representation if JSON serialization fails
+            log_entry['serialization_error'] = str(e)
+            # Convert all values to strings as fallback
+            safe_log_entry = {k: str(v) for k, v in log_entry.items()}
+            return json.dumps(safe_log_entry, ensure_ascii=False)
 
 
 class PerformanceFilter(logging.Filter):

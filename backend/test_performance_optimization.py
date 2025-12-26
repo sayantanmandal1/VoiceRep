@@ -255,7 +255,7 @@ class TestConcurrentProcessingManager:
             return x + y
         
         # Submit task
-        result = await manager.submit_synthesis_task(test_task, 5, 3)
+        result = await manager.submit_synthesis_task(test_task, 5, 3, priority=5)
         
         assert result == 8
     

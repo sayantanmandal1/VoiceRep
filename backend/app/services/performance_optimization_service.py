@@ -1023,13 +1023,16 @@ class PerformanceOptimizationService:
             # Submit synthesis task with timeout
             timeout = max(target_synthesis_time * 3, 60)  # Allow 3x target time, minimum 60s
             
+            # Remove priority from kwargs to avoid duplicate parameter
+            synthesis_kwargs = {k: v for k, v in kwargs.items() if k != 'priority'}
+            
             result = await self.concurrency_manager.submit_synthesis_task(
                 synthesis_func,
                 text,
                 voice_profile,
                 timeout=timeout,
                 priority=2,  # Medium-high priority
-                **kwargs
+                **synthesis_kwargs
             )
             
             processing_time = time.time() - start_time

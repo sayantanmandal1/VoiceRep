@@ -249,3 +249,95 @@ Your voice cloning system now achieves:
 ## 📄 License
 
 This project is for educational and development purposes. Please ensure compliance with voice cloning ethics and local regulations when using this technology.
+
+## 🏃‍♂️ Running the Application
+
+### Option 1: Automatic Startup (Recommended)
+```bash
+# Activate your conda environment
+conda activate ey2
+
+# Run the startup script
+python start_app.py
+```
+
+This will start:
+- **Backend**: http://localhost:8000
+- **Frontend**: http://localhost:3000
+
+### Option 2: Manual Startup
+
+**Backend:**
+```bash
+conda activate ey2
+cd backend
+uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+```
+
+**Frontend (in a new terminal):**
+```bash
+cd frontend
+npm run dev
+```
+
+## 🔧 Troubleshooting
+
+### Bark Model Issues
+If you see "invalid load key" errors for the Bark model:
+```bash
+python fix_bark_model.py
+```
+
+### Port Configuration
+- **Backend**: http://localhost:8000
+- **Frontend**: http://localhost:3000
+- **API Documentation**: http://localhost:8000/docs
+
+### Common Issues
+
+1. **Performance Optimization Error**: Fixed in latest version
+2. **Bark Model Corruption**: Run `python fix_bark_model.py`
+3. **Port Conflicts**: Ensure ports 3000 and 8000 are available
+
+## 🎯 Enhanced Features (Latest Update)
+
+### Real-Time Quality Monitoring
+- Live similarity scoring during synthesis
+- Confidence metrics for each voice characteristic
+- Quality improvement recommendations
+
+### Enhanced Error Recovery
+- Intelligent error categorization
+- Automatic retry with exponential backoff
+- Detailed recovery suggestions
+
+### Performance Optimizations
+- GPU acceleration with RTX support
+- Intelligent model caching
+- Concurrent request handling
+- Faster-than-real-time synthesis
+
+## 📊 Quality Metrics
+
+The system provides comprehensive quality analysis:
+- **Overall Similarity**: Target >95%
+- **Pitch Similarity**: Fundamental frequency matching
+- **Timbre Similarity**: Voice quality characteristics
+- **Prosody Similarity**: Speech rhythm and intonation
+- **Spectral Similarity**: Frequency domain analysis
+- **Confidence Scores**: Reliability indicators
+
+## 🏗️ Architecture Overview
+
+### Enhanced Pipeline
+1. **Advanced Audio Preprocessing**: Spectral enhancement, noise reduction
+2. **Multi-Dimensional Voice Analysis**: Comprehensive characteristic extraction
+3. **Ensemble Voice Synthesis**: Multiple TTS models working together
+4. **Intelligent Post-Processing**: Quality enhancement and artifact removal
+5. **Real-Time Quality Monitoring**: Continuous assessment and feedback
+
+### Key Services
+- `ensemble_voice_synthesis_engine.py` - Multi-model synthesis
+- `real_time_quality_monitor.py` - Quality assessment
+- `performance_optimization_service.py` - GPU optimization
+- `advanced_audio_preprocessing.py` - Audio enhancement
