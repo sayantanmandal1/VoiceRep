@@ -47,7 +47,7 @@ class Settings(BaseSettings):
     # Synthesis
     DEFAULT_SYNTHESIS_QUALITY: str = "high"
     MAX_SYNTHESIS_QUEUE_SIZE: int = 100
-    SYNTHESIS_TIMEOUT: int = 300  # 5 minutes
+    SYNTHESIS_TIMEOUT: int = 600  # 10 minutes
     
     # Performance
     MAX_CONCURRENT_TASKS: int = 10

@@ -434,6 +434,15 @@ export default function SynthesisManager({
           request: error.request
         });
         
+        // Handle timeout errors specifically
+        if (error.message?.includes('timeout') || error.code === 'ECONNABORTED') {
+          console.warn('Request timeout, but synthesis may still be processing. Continuing to poll...');
+          if (attempts < maxAttempts) {
+            setTimeout(poll, 2000); // Wait a bit longer before retrying
+            return;
+          }
+        }
+        
         // If it's a 202 (still processing), continue polling
         if (error.message?.includes('202') && attempts < maxAttempts) {
           setTimeout(poll, 1000);
