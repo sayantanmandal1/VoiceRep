@@ -165,6 +165,8 @@ class SynthesisProgress(BaseModel):
     status: str = Field(..., description="Current status message")
     stage: Optional[str] = Field(None, description="Current processing stage")
     estimated_remaining: Optional[float] = Field(None, description="Estimated remaining time in seconds")
+    quality_metrics: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Real-time quality metrics")
+    recommendations: Optional[List[str]] = Field(default_factory=list, description="Quality improvement recommendations")
     
     class Config:
         json_schema_extra = {
@@ -173,7 +175,16 @@ class SynthesisProgress(BaseModel):
                 "progress": 65,
                 "status": "Applying voice conversion",
                 "stage": "voice_conversion",
-                "estimated_remaining": 8.5
+                "estimated_remaining": 8.5,
+                "quality_metrics": {
+                    "current_similarity": 0.87,
+                    "confidence_score": 0.82,
+                    "processing_stage": "synthesis"
+                },
+                "recommendations": [
+                    "Consider using higher quality reference audio",
+                    "Ensure reference audio is at least 10 seconds long"
+                ]
             }
         }
 

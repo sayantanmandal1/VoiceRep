@@ -45,7 +45,7 @@ class SpeechSynthesizer:
         for directory in [settings.RESULTS_DIR, settings.MODELS_DIR]:
             Path(directory).mkdir(parents=True, exist_ok=True)
     
-    def synthesize_speech(
+    async def synthesize_speech(
         self, 
         text: str, 
         voice_model: VoiceModelSchema, 
@@ -73,9 +73,9 @@ class SpeechSynthesizer:
             if progress_callback:
                 progress_callback(5, "Preparing synthesis")
             
-            # Use real TTS service - no fallbacks
-            logger.info("Using real TTS service for voice synthesis")
-            return await self._synthesize_with_real_tts(
+            # Use enhanced voice cloning pipeline - no fallbacks
+            logger.info("Using enhanced voice cloning pipeline with ensemble synthesis")
+            return await self._synthesize_with_enhanced_pipeline(
                 text, voice_model, language, voice_settings, 
                 progress_callback, operation_id, start_time
             )
@@ -166,7 +166,7 @@ class SpeechSynthesizer:
             logger.error(f"Speech synthesis failed: {str(e)}")
             return False, None, {"error": str(e)}
     
-    async def _synthesize_with_real_tts(
+    async def _synthesize_with_enhanced_pipeline(
         self,
         text: str,
         voice_model: VoiceModelSchema,
@@ -176,44 +176,132 @@ class SpeechSynthesizer:
         operation_id: str,
         start_time: float
     ) -> Tuple[bool, Optional[str], Dict[str, Any]]:
-        """Use real TTS service for synthesis."""
+        """Use enhanced voice cloning pipeline with ensemble synthesis."""
         try:
             if progress_callback:
-                progress_callback(20, "Using ensemble TTS service")
+                progress_callback(5, "Initializing enhanced voice cloning pipeline")
+            
+            # Import real-time quality monitor
+            from app.services.real_time_quality_monitor import real_time_quality_monitor
+            
+            # Start quality monitoring session
+            session_id = f"synthesis_{operation_id}"
+            real_time_quality_monitor.start_monitoring_session(
+                session_id, 
+                quality_targets={
+                    'minimum_similarity': 0.95,
+                    'minimum_quality': 0.90,
+                    'minimum_confidence': 0.85
+                }
+            )
             
             # Check if ensemble service is available and initialized
             if hasattr(ensemble_voice_synthesizer, 'loaded_models') and ensemble_voice_synthesizer.loaded_models:
                 # Use ensemble synthesis for highest quality
                 logger.info("Using ensemble voice synthesis for maximum quality")
                 
+                if progress_callback:
+                    progress_callback(10, "Preparing ensemble synthesis")
+                
+                # Update monitoring stage
+                from app.services.real_time_quality_monitor import ProcessingStage
+                real_time_quality_monitor.update_processing_stage(
+                    session_id, ProcessingStage.SYNTHESIS, 0.1
+                )
+                
                 # Convert voice model to voice profile for ensemble synthesis
                 voice_profile = self._convert_voice_model_to_profile(voice_model)
+                
+                # Enhanced progress callback with quality monitoring
+                def enhanced_progress_callback(progress: int, message: str):
+                    if progress_callback:
+                        progress_callback(progress, message)
+                    
+                    # Update quality monitoring
+                    stage_progress = progress / 100.0
+                    real_time_quality_monitor.update_processing_stage(
+                        session_id, ProcessingStage.SYNTHESIS, stage_progress
+                    )
                 
                 success, output_path, metadata = await ensemble_voice_synthesizer.synthesize_speech_ensemble(
                     text=text,
                     voice_profile=voice_profile,
                     language=language or "en",
-                    progress_callback=progress_callback
+                    progress_callback=enhanced_progress_callback
                 )
                 
                 if success and output_path:
                     processing_time = time.time() - start_time
                     
-                    # Update metadata with ensemble information
-                    metadata.update({
-                        "text": text,
-                        "language": language or "en",
-                        "voice_model_id": voice_model.id,
-                        "processing_time": processing_time,
-                        "synthesis_method": "ensemble_voice_cloning",
-                        "ensemble_synthesis": True
-                    })
+                    # Perform final quality assessment
+                    if progress_callback:
+                        progress_callback(95, "Performing quality assessment")
+                    
+                    # Load synthesized audio for quality assessment
+                    import librosa
+                    synthesized_audio, _ = librosa.load(output_path, sr=22050)
+                    
+                    # Get reference audio for comparison
+                    reference_audio_path = voice_model.model_path
+                    if reference_audio_path and os.path.exists(reference_audio_path):
+                        reference_audio, _ = librosa.load(reference_audio_path, sr=22050)
+                        
+                        # Assess final quality with monitoring
+                        final_metrics = real_time_quality_monitor.assess_real_time_quality(
+                            session_id, synthesized_audio, 22050, 
+                            ProcessingStage.POST_PROCESSING, reference_audio
+                        )
+                        
+                        # Get detailed similarity metrics
+                        similarity_metrics = real_time_quality_monitor.calculate_detailed_similarity(
+                            synthesized_audio, reference_audio, 22050
+                        )
+                        
+                        # Update metadata with enhanced quality information
+                        metadata.update({
+                            "text": text,
+                            "language": language or "en",
+                            "voice_model_id": voice_model.id,
+                            "processing_time": processing_time,
+                            "synthesis_method": "enhanced_ensemble_pipeline",
+                            "ensemble_synthesis": True,
+                            "quality_metrics": {
+                                "overall_similarity": similarity_metrics.overall_similarity,
+                                "pitch_similarity": similarity_metrics.pitch_similarity,
+                                "timbre_similarity": similarity_metrics.timbre_similarity,
+                                "prosody_similarity": similarity_metrics.prosody_similarity,
+                                "spectral_similarity": similarity_metrics.spectral_similarity,
+                                "confidence_score": final_metrics.confidence_score,
+                                "quality_level": real_time_quality_monitor.get_quality_level(final_metrics.quality_score).value
+                            },
+                            "recommendations": final_metrics.recommendations if final_metrics.similarity_score < 0.95 else []
+                        })
+                    else:
+                        # Basic metadata without reference comparison
+                        metadata.update({
+                            "text": text,
+                            "language": language or "en",
+                            "voice_model_id": voice_model.id,
+                            "processing_time": processing_time,
+                            "synthesis_method": "enhanced_ensemble_pipeline",
+                            "ensemble_synthesis": True,
+                            "quality_metrics": metadata.get("quality_metrics", {}),
+                            "recommendations": []
+                        })
+                    
+                    # Complete quality monitoring session
+                    real_time_quality_monitor.complete_session(session_id)
+                    
+                    if progress_callback:
+                        progress_callback(100, "Enhanced synthesis complete")
                     
                     return success, output_path, metadata
                 else:
-                    logger.warning("Ensemble synthesis failed, falling back to real TTS")
+                    logger.warning("Ensemble synthesis failed, falling back to advanced voice cloning")
             
-            # Fallback to real voice synthesis service
+            # Fallback to advanced voice cloning service
+            if progress_callback:
+                progress_callback(15, "Using advanced voice cloning service")
             
             # Get reference audio path from voice model
             reference_audio_path = voice_model.model_path
@@ -225,18 +313,30 @@ class SpeechSynthesizer:
             output_filename = f"synthesis_{voice_model.id}_{timestamp}.wav"
             output_path = os.path.join(settings.RESULTS_DIR, output_filename)
             
-            # Use real voice synthesis service
-            result = await real_voice_synthesis_service.synthesize_speech(
+            # Use advanced voice cloning service with quality monitoring
+            from app.services.real_voice_synthesis_service import advanced_voice_cloning_service
+            
+            def monitored_progress_callback(progress: int, message: str):
+                if progress_callback:
+                    progress_callback(progress, message)
+                
+                # Update quality monitoring
+                stage_progress = progress / 100.0
+                real_time_quality_monitor.update_processing_stage(
+                    session_id, ProcessingStage.SYNTHESIS, stage_progress
+                )
+            
+            result = await advanced_voice_cloning_service.synthesize_speech(
                 text=text,
                 reference_audio_path=reference_audio_path,
                 output_path=output_path,
                 language=language or "en",
-                progress_callback=progress_callback
+                progress_callback=monitored_progress_callback
             )
             
             processing_time = time.time() - start_time
             
-            # Generate metadata
+            # Generate enhanced metadata with quality assessment
             metadata = {
                 "text": text,
                 "language": language or "en",
@@ -245,18 +345,59 @@ class SpeechSynthesizer:
                 "sample_rate": result.get("sample_rate", 22050),
                 "duration": result.get("duration", 0),
                 "voice_settings": voice_settings or {},
-                "quality_score": result.get("quality_score", 0.8),
-                "real_synthesis": True
+                "synthesis_method": "advanced_voice_cloning",
+                "quality_metrics": {
+                    "quality_score": result.get("quality_score", 0.8),
+                    "similarity_score": result.get("similarity_score", 0.8),
+                    "confidence_score": result.get("confidence_score", 0.75)
+                },
+                "recommendations": result.get("recommendations", [])
             }
             
+            # Complete quality monitoring session
+            real_time_quality_monitor.complete_session(session_id)
+            
             if progress_callback:
-                progress_callback(100, "Real synthesis complete")
+                progress_callback(100, "Advanced synthesis complete")
             
             return True, output_path, metadata
             
         except Exception as e:
-            logger.error(f"Real synthesis failed: {str(e)}")
-            return False, None, {"error": str(e)}
+            logger.error(f"Enhanced synthesis failed: {str(e)}")
+            
+            # Use enhanced error handling
+            from app.core.error_handling import error_recovery_manager, ErrorCategory
+            error_info = error_recovery_manager.handle_error(
+                e, ErrorCategory.SYNTHESIS, 
+                {
+                    "operation_id": operation_id,
+                    "voice_model_id": voice_model.id,
+                    "text_length": len(text),
+                    "language": language
+                }
+            )
+            
+            # Complete quality monitoring session with error
+            try:
+                real_time_quality_monitor.complete_session(session_id, error=str(e))
+            except:
+                pass
+            
+            # Return enhanced error information
+            return False, None, {
+                "error": str(e),
+                "error_id": error_info.error_id,
+                "error_category": error_info.category,
+                "is_retryable": error_info.is_retryable,
+                "recovery_suggestions": [
+                    "Check reference audio quality and duration",
+                    "Verify text input format and language",
+                    "Try with shorter text segments",
+                    "Ensure sufficient system resources"
+                ] if error_info.is_retryable else [
+                    "Contact support with error ID: " + error_info.error_id
+                ]
+            }
     
     def _convert_voice_model_to_profile(self, voice_model: VoiceModelSchema) -> 'VoiceProfileSchema':
         """Convert VoiceModelSchema to VoiceProfileSchema for ensemble synthesis."""
@@ -796,3 +937,7 @@ class CrossLanguageSynthesizer:
 # Global service instances
 speech_synthesizer = SpeechSynthesizer()
 cross_language_synthesizer = CrossLanguageSynthesizer(speech_synthesizer)
+
+# Initialize real-time quality monitor
+from app.services.real_time_quality_monitor import RealTimeQualityMonitor
+real_time_quality_monitor = RealTimeQualityMonitor()

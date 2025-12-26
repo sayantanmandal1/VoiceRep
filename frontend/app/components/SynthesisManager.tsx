@@ -1,10 +1,25 @@
 'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { apiClient, SynthesisRequest, SynthesisProgress, SynthesisResult } from '../lib/api';
+import { apiClient } from '../lib/api';
 import AudioPlayer from './AudioPlayer';
 import { useNotifications } from './NotificationSystem';
 import { ComprehensiveProgressBar, useProgressSteps, ProgressStep } from './ComprehensiveProgressBar';
+
+// Local interfaces for this component
+interface SynthesisRequest {
+  text: string;
+  voice_model_id: string;
+  language: string;
+  voice_settings?: {
+    pitch_shift?: number;
+    speed_factor?: number;
+    emotion_intensity?: number;
+    volume_gain?: number;
+  };
+  output_format?: 'wav' | 'mp3' | 'flac';
+  quality?: 'standard' | 'high' | 'premium';
+}
 
 interface SynthesisManagerProps {
   uploadedFile?: any;
@@ -20,6 +35,59 @@ interface SynthesisTask {
   queue_position?: number;
 }
 
+interface SynthesisProgress {
+  task_id: string;
+  progress: number;
+  status: string;
+  stage?: string;
+  estimated_remaining?: number;
+  quality_metrics?: {
+    current_similarity?: number;
+    confidence_score?: number;
+    processing_stage?: string;
+  };
+  recommendations?: string[];
+}
+
+interface QualityMetrics {
+  overall_similarity?: number;
+  pitch_similarity?: number;
+  timbre_similarity?: number;
+  prosody_similarity?: number;
+  spectral_similarity?: number;
+  confidence_score?: number;
+  quality_level?: string;
+}
+
+interface SynthesisResult {
+  task_id: string;
+  status: 'completed' | 'failed';
+  output_url?: string;
+  output_path?: string;
+  metadata?: {
+    duration?: number;
+    sample_rate?: number;
+    language?: string;
+    quality_score?: number;
+    processing_time?: number;
+    quality_metrics?: QualityMetrics;
+    recommendations?: string[];
+    synthesis_method?: string;
+    error_details?: {
+      error_id?: string;
+      error_type?: string;
+      error_message?: string;
+      error_category?: string;
+      is_retryable?: boolean;
+      recovery_suggestions?: string[];
+    };
+  };
+  error_message?: string;
+  processing_time?: number;
+  created_at: string;
+  completed_at?: string;
+}
+
 export default function SynthesisManager({ 
   uploadedFile, 
   validatedText, 
@@ -28,6 +96,8 @@ export default function SynthesisManager({
   const [synthesisTask, setSynthesisTask] = useState<SynthesisTask | null>(null);
   const [synthesisResult, setSynthesisResult] = useState<SynthesisResult | null>(null);
   const [progress, setProgress] = useState<SynthesisProgress | null>(null);
+  const [qualityMetrics, setQualityMetrics] = useState<QualityMetrics | null>(null);
+  const [recommendations, setRecommendations] = useState<string[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string>('');
   const [showProgress, setShowProgress] = useState(false);
@@ -201,6 +271,14 @@ export default function SynthesisManager({
         // Get progress using API client
         const progressData = await apiClient.getSynthesisStatus(taskId);
         setProgress(progressData);
+        
+        // Update quality metrics and recommendations if available
+        if (progressData.quality_metrics) {
+          setQualityMetrics(progressData.quality_metrics);
+        }
+        if (progressData.recommendations) {
+          setRecommendations(progressData.recommendations);
+        }
 
         // Map progress to our detailed steps
         if (progressData.stage === 'queued') {
@@ -269,6 +347,14 @@ export default function SynthesisManager({
           // Get final result
           const result = await apiClient.getSynthesisResult(taskId);
           
+          // Extract quality metrics from result
+          if (result.metadata?.quality_metrics) {
+            setQualityMetrics(result.metadata.quality_metrics);
+          }
+          if (result.metadata?.recommendations) {
+            setRecommendations(result.metadata.recommendations);
+          }
+          
           updateProgress('finalization', 100);
           completeStep('finalization');
           
@@ -276,10 +362,16 @@ export default function SynthesisManager({
           setIsProcessing(false);
           setShowProgress(false);
           
+          // Enhanced notification with quality info
+          const qualityScore = result.metadata?.quality_metrics?.overall_similarity;
+          const qualityMessage = qualityScore 
+            ? `Quality score: ${(qualityScore * 100).toFixed(1)}%`
+            : 'Your voice has been successfully synthesized and is ready for playback.';
+          
           addNotification({
             type: 'success',
             title: 'Synthesis Complete!',
-            message: 'Your voice has been successfully synthesized and is ready for playback.',
+            message: qualityMessage,
             duration: 5000
           });
           return;
@@ -631,6 +723,156 @@ export default function SynthesisManager({
             className="mb-6"
           />
 
+          {/* Quality Metrics Display */}
+          {qualityMetrics && (
+            <div className="bg-gradient-to-r from-green-50 to-blue-50 dark:from-green-900/20 dark:to-blue-900/20 border border-green-200 dark:border-green-800 rounded-lg p-6">
+              <h4 className="font-semibold text-gray-900 dark:text-gray-100 mb-4 flex items-center">
+                <svg className="w-5 h-5 mr-2 text-green-600 dark:text-green-400" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M6.267 3.455a3.066 3.066 0 001.745-.723 3.066 3.066 0 013.976 0 3.066 3.066 0 001.745.723 3.066 3.066 0 012.812 2.812c.051.643.304 1.254.723 1.745a3.066 3.066 0 010 3.976 3.066 3.066 0 00-.723 1.745 3.066 3.066 0 01-2.812 2.812 3.066 3.066 0 00-1.745.723 3.066 3.066 0 01-3.976 0 3.066 3.066 0 00-1.745-.723 3.066 3.066 0 01-2.812-2.812 3.066 3.066 0 00-.723-1.745 3.066 3.066 0 010-3.976 3.066 3.066 0 00.723-1.745 3.066 3.066 0 012.812-2.812zm7.44 5.252a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                </svg>
+                Voice Quality Analysis
+              </h4>
+              
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {qualityMetrics.overall_similarity && (
+                  <div className="bg-white dark:bg-gray-800 rounded-lg p-4 border border-gray-200 dark:border-gray-700">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-sm font-medium text-gray-600 dark:text-gray-400">Overall Similarity</span>
+                      <span className={`text-lg font-bold ${
+                        qualityMetrics.overall_similarity >= 0.95 ? 'text-green-600 dark:text-green-400' :
+                        qualityMetrics.overall_similarity >= 0.85 ? 'text-yellow-600 dark:text-yellow-400' :
+                        'text-red-600 dark:text-red-400'
+                      }`}>
+                        {(qualityMetrics.overall_similarity * 100).toFixed(1)}%
+                      </span>
+                    </div>
+                    <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
+                      <div 
+                        className={`h-2 rounded-full ${
+                          qualityMetrics.overall_similarity >= 0.95 ? 'bg-green-500' :
+                          qualityMetrics.overall_similarity >= 0.85 ? 'bg-yellow-500' :
+                          'bg-red-500'
+                        }`}
+                        style={{ width: `${qualityMetrics.overall_similarity * 100}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
+                
+                {qualityMetrics.pitch_similarity && (
+                  <div className="bg-white dark:bg-gray-800 rounded-lg p-4 border border-gray-200 dark:border-gray-700">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-sm font-medium text-gray-600 dark:text-gray-400">Pitch Match</span>
+                      <span className="text-lg font-bold text-blue-600 dark:text-blue-400">
+                        {(qualityMetrics.pitch_similarity * 100).toFixed(1)}%
+                      </span>
+                    </div>
+                    <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
+                      <div 
+                        className="bg-blue-500 h-2 rounded-full"
+                        style={{ width: `${qualityMetrics.pitch_similarity * 100}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
+                
+                {qualityMetrics.timbre_similarity && (
+                  <div className="bg-white dark:bg-gray-800 rounded-lg p-4 border border-gray-200 dark:border-gray-700">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-sm font-medium text-gray-600 dark:text-gray-400">Voice Timbre</span>
+                      <span className="text-lg font-bold text-purple-600 dark:text-purple-400">
+                        {(qualityMetrics.timbre_similarity * 100).toFixed(1)}%
+                      </span>
+                    </div>
+                    <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
+                      <div 
+                        className="bg-purple-500 h-2 rounded-full"
+                        style={{ width: `${qualityMetrics.timbre_similarity * 100}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
+                
+                {qualityMetrics.prosody_similarity && (
+                  <div className="bg-white dark:bg-gray-800 rounded-lg p-4 border border-gray-200 dark:border-gray-700">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-sm font-medium text-gray-600 dark:text-gray-400">Speech Rhythm</span>
+                      <span className="text-lg font-bold text-indigo-600 dark:text-indigo-400">
+                        {(qualityMetrics.prosody_similarity * 100).toFixed(1)}%
+                      </span>
+                    </div>
+                    <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
+                      <div 
+                        className="bg-indigo-500 h-2 rounded-full"
+                        style={{ width: `${qualityMetrics.prosody_similarity * 100}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
+                
+                {qualityMetrics.confidence_score && (
+                  <div className="bg-white dark:bg-gray-800 rounded-lg p-4 border border-gray-200 dark:border-gray-700">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-sm font-medium text-gray-600 dark:text-gray-400">Confidence</span>
+                      <span className="text-lg font-bold text-teal-600 dark:text-teal-400">
+                        {(qualityMetrics.confidence_score * 100).toFixed(1)}%
+                      </span>
+                    </div>
+                    <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
+                      <div 
+                        className="bg-teal-500 h-2 rounded-full"
+                        style={{ width: `${qualityMetrics.confidence_score * 100}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
+                
+                {qualityMetrics.quality_level && (
+                  <div className="bg-white dark:bg-gray-800 rounded-lg p-4 border border-gray-200 dark:border-gray-700">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-sm font-medium text-gray-600 dark:text-gray-400">Quality Level</span>
+                      <span className={`text-lg font-bold capitalize ${
+                        qualityMetrics.quality_level === 'excellent' ? 'text-green-600 dark:text-green-400' :
+                        qualityMetrics.quality_level === 'good' ? 'text-blue-600 dark:text-blue-400' :
+                        qualityMetrics.quality_level === 'acceptable' ? 'text-yellow-600 dark:text-yellow-400' :
+                        'text-red-600 dark:text-red-400'
+                      }`}>
+                        {qualityMetrics.quality_level}
+                      </span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Recommendations Display */}
+          {recommendations && recommendations.length > 0 && (
+            <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg p-6">
+              <h4 className="font-semibold text-gray-900 dark:text-gray-100 mb-4 flex items-center">
+                <svg className="w-5 h-5 mr-2 text-yellow-600 dark:text-yellow-400" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                </svg>
+                Quality Improvement Recommendations
+              </h4>
+              
+              <div className="space-y-3">
+                {recommendations.map((recommendation, index) => (
+                  <div key={index} className="flex items-start space-x-3 p-3 bg-white dark:bg-gray-800 rounded-lg border border-yellow-200 dark:border-yellow-700">
+                    <div className="flex-shrink-0 w-6 h-6 bg-yellow-100 dark:bg-yellow-900 rounded-full flex items-center justify-center mt-0.5">
+                      <span className="text-xs font-medium text-yellow-800 dark:text-yellow-200">
+                        {index + 1}
+                      </span>
+                    </div>
+                    <p className="text-sm text-gray-700 dark:text-gray-300">
+                      {recommendation}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Synthesis Metadata */}
           {synthesisResult.metadata && (
             <div className="bg-gray-50 dark:bg-gray-800 rounded-lg p-4">
@@ -641,25 +883,25 @@ export default function SynthesisManager({
                 <div>
                   <span className="text-gray-500 dark:text-gray-400">Duration:</span>
                   <span className="ml-2 text-gray-900 dark:text-gray-100">
-                    {synthesisResult.metadata.duration.toFixed(1)}s
+                    {synthesisResult.metadata?.duration?.toFixed(1) || 'N/A'}s
                   </span>
                 </div>
                 <div>
                   <span className="text-gray-500 dark:text-gray-400">Sample Rate:</span>
                   <span className="ml-2 text-gray-900 dark:text-gray-100">
-                    {synthesisResult.metadata.sample_rate} Hz
+                    {synthesisResult.metadata?.sample_rate || 'N/A'} Hz
                   </span>
                 </div>
                 <div>
                   <span className="text-gray-500 dark:text-gray-400">Language:</span>
                   <span className="ml-2 text-gray-900 dark:text-gray-100 capitalize">
-                    {synthesisResult.metadata.language}
+                    {synthesisResult.metadata?.language || 'N/A'}
                   </span>
                 </div>
                 <div>
                   <span className="text-gray-500 dark:text-gray-400">Quality:</span>
                   <span className="ml-2 text-gray-900 dark:text-gray-100">
-                    {Math.round(synthesisResult.metadata.quality_score * 100)}%
+                    {synthesisResult.metadata?.quality_score ? Math.round(synthesisResult.metadata.quality_score * 100) : 'N/A'}%
                   </span>
                 </div>
                 {synthesisResult.processing_time && (
@@ -712,12 +954,67 @@ export default function SynthesisManager({
             </div>
           </div>
           
-          <button
-            onClick={startSynthesis}
-            className="px-4 py-2 text-sm font-medium text-red-700 dark:text-red-400 bg-transparent border border-red-300 dark:border-red-600 rounded-md hover:bg-red-50 dark:hover:bg-red-900/30 transition-colors"
-          >
-            Try Again
-          </button>
+          {/* Error Details */}
+          {synthesisResult.metadata?.error_details && (
+            <div className="mb-4 p-4 bg-red-100 dark:bg-red-900/30 rounded-lg">
+              <h4 className="font-medium text-red-900 dark:text-red-100 mb-2">Error Details</h4>
+              <div className="text-sm text-red-800 dark:text-red-200 space-y-1">
+                {synthesisResult.metadata.error_details.error_id && (
+                  <p><span className="font-medium">Error ID:</span> {synthesisResult.metadata.error_details.error_id}</p>
+                )}
+                {synthesisResult.metadata.error_details.error_category && (
+                  <p><span className="font-medium">Category:</span> {synthesisResult.metadata.error_details.error_category}</p>
+                )}
+                {synthesisResult.metadata.error_details.is_retryable !== undefined && (
+                  <p><span className="font-medium">Retryable:</span> {synthesisResult.metadata.error_details.is_retryable ? 'Yes' : 'No'}</p>
+                )}
+              </div>
+            </div>
+          )}
+          
+          {/* Recovery Suggestions */}
+          {synthesisResult.metadata?.error_details?.recovery_suggestions && (
+            <div className="mb-4 p-4 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-700 rounded-lg">
+              <h4 className="font-medium text-yellow-900 dark:text-yellow-100 mb-2 flex items-center">
+                <svg className="w-4 h-4 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+                </svg>
+                Recovery Suggestions
+              </h4>
+              <ul className="text-sm text-yellow-800 dark:text-yellow-200 space-y-1">
+                {synthesisResult.metadata.error_details.recovery_suggestions.map((suggestion: string, index: number) => (
+                  <li key={index} className="flex items-start">
+                    <span className="w-2 h-2 bg-yellow-400 rounded-full mt-2 mr-2 flex-shrink-0"></span>
+                    {suggestion}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          
+          <div className="flex space-x-3">
+            {synthesisResult.metadata?.error_details?.is_retryable && (
+              <button
+                onClick={startSynthesis}
+                className="px-4 py-2 text-sm font-medium text-red-700 dark:text-red-400 bg-transparent border border-red-300 dark:border-red-600 rounded-md hover:bg-red-50 dark:hover:bg-red-900/30 transition-colors"
+              >
+                Try Again
+              </button>
+            )}
+            <button
+              onClick={() => {
+                setSynthesisTask(null);
+                setSynthesisResult(null);
+                setProgress(null);
+                setError('');
+                setShowProgress(false);
+                resetSteps();
+              }}
+              className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-400 bg-transparent border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-900/30 transition-colors"
+            >
+              Start Over
+            </button>
+          </div>
         </div>
       )}
     </div>
