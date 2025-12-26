@@ -61,6 +61,7 @@ except ImportError:
 from TTS.api import TTS
 
 from app.core.config import settings
+from app.services.enhanced_audio_processor import enhanced_audio_processor
 
 logger = logging.getLogger(__name__)
 
@@ -113,6 +114,28 @@ class AdvancedVoiceCloningService:
         }
         
         logger.info(f"Initializing Advanced Voice Cloning Service")
+        
+    def _get_model_language_code(self, language: str) -> str:
+        """Convert language to model-specific format for voice cloning."""
+        # Language mappings for voice cloning models
+        language_mappings = {
+            'english': 'en', 'spanish': 'es', 'french': 'fr', 'german': 'de',
+            'italian': 'it', 'portuguese': 'pt', 'polish': 'pl', 'turkish': 'tr',
+            'russian': 'ru', 'dutch': 'nl', 'czech': 'cs', 'arabic': 'ar',
+            'chinese': 'zh-cn', 'japanese': 'ja', 'hungarian': 'hu', 'korean': 'ko',
+            # Also support direct ISO codes
+            'en': 'en', 'es': 'es', 'fr': 'fr', 'de': 'de', 'it': 'it', 'pt': 'pt',
+            'pl': 'pl', 'tr': 'tr', 'ru': 'ru', 'nl': 'nl', 'cs': 'cs', 'ar': 'ar',
+            'zh-cn': 'zh-cn', 'ja': 'ja', 'hu': 'hu', 'ko': 'ko'
+        }
+        
+        mapped_language = language_mappings.get(language.lower())
+        if mapped_language:
+            return mapped_language
+            
+        # Default fallback to English
+        logger.warning(f"Language '{language}' not supported, falling back to English")
+        return 'en'
         
     async def initialize_model(self, progress_callback: Optional[Callable] = None) -> bool:
         """Initialize the advanced voice cloning models."""
@@ -432,11 +455,15 @@ class AdvancedVoiceCloningService:
                         # Apply high-quality settings
                         self.voice_clone_model.synthesizer.tts_config.update(synthesis_config)
                     
+                    # Convert language to model-specific format
+                    model_language = self._get_model_language_code(language)
+                    logger.info(f"Using language '{model_language}' for voice cloning (original: '{language}')")
+                    
                     # Generate speech with voice cloning
                     self.voice_clone_model.tts_to_file(
                         text=text,
                         speaker_wav=processed_reference,
-                        language=language,
+                        language=model_language,
                         file_path=output_path,
                         split_sentences=True,  # Better prosody
                         emotion="neutral"  # Let the reference audio define emotion
@@ -461,14 +488,37 @@ class AdvancedVoiceCloningService:
                 raise RuntimeError("Voice cloning failed to generate audio file")
             
             if progress_callback:
-                progress_callback(80, "Post-processing for voice matching")
+                progress_callback(80, "Post-processing for voice matching and artifact removal")
             
-            # Post-process the generated audio to match reference characteristics even more closely
-            enhanced_output = await self._enhance_voice_matching(
+            # Enhanced post-processing with artifact removal and clarity improvement
+            enhanced_output, processing_metrics = enhanced_audio_processor.process_synthesized_audio(
                 output_path, 
-                processed_reference, 
-                voice_characteristics
+                processed_reference,
+                output_path  # Process in-place
             )
+            
+            # Additional voice matching if processing was successful
+            if processing_metrics.get("processing_success", False):
+                enhanced_output = await self._enhance_voice_matching(
+                    enhanced_output, 
+                    processed_reference, 
+                    voice_characteristics
+                )
+                
+                # Log processing improvements
+                quality_improvement = processing_metrics.get("quality_improvement", 0.0)
+                logger.info(f"Audio processing completed with {quality_improvement:.2f} quality improvement")
+                
+                # Add processing metrics to result
+                synthesis_method += "_enhanced"
+                quality_score = min(0.98, quality_score + quality_improvement * 0.1)
+            else:
+                # Fallback to original voice matching if enhanced processing failed
+                enhanced_output = await self._enhance_voice_matching(
+                    output_path, 
+                    processed_reference, 
+                    voice_characteristics
+                )
             
             if progress_callback:
                 progress_callback(90, "Finalizing voice-cloned audio")
@@ -541,40 +591,53 @@ class AdvancedVoiceCloningService:
         reference_audio_path: str, 
         voice_characteristics: Dict[str, Any]
     ) -> str:
-        """Post-process generated audio to match reference voice characteristics more closely."""
+        """Post-process generated audio to match reference voice characteristics more closely and remove artifacts."""
         try:
             # Load both audio files
             generated_audio, sr = librosa.load(generated_audio_path, sr=self.sample_rate)
             reference_audio, _ = librosa.load(reference_audio_path, sr=self.sample_rate)
             
-            # Apply voice matching enhancements
+            # Apply comprehensive audio enhancement pipeline
             enhanced_audio = generated_audio.copy()
             
-            # 1. Pitch matching
-            enhanced_audio = self._match_pitch_characteristics(
-                enhanced_audio, sr, voice_characteristics.get("pitch_characteristics", {})
+            # 1. Remove dual sound artifacts and overlapping issues
+            enhanced_audio = self._remove_dual_sound_artifacts(enhanced_audio, sr)
+            
+            # 2. Advanced noise reduction and clarity enhancement
+            enhanced_audio = self._enhance_audio_clarity(enhanced_audio, sr)
+            
+            # 3. Remove echo and reverb artifacts
+            enhanced_audio = self._remove_echo_artifacts(enhanced_audio, sr)
+            
+            # 4. Pitch matching with artifact prevention
+            enhanced_audio = self._match_pitch_characteristics_enhanced(
+                enhanced_audio, sr, voice_characteristics.get("pitch_characteristics", {}), reference_audio
             )
             
-            # 2. Spectral envelope matching
-            enhanced_audio = self._match_spectral_envelope(
+            # 5. Advanced spectral envelope matching
+            enhanced_audio = self._match_spectral_envelope_advanced(
                 enhanced_audio, reference_audio, sr
             )
             
-            # 3. Prosody matching
-            enhanced_audio = self._match_prosodic_patterns(
-                enhanced_audio, sr, voice_characteristics.get("prosodic_patterns", {})
+            # 6. Prosody matching with smoothing
+            enhanced_audio = self._match_prosodic_patterns_smooth(
+                enhanced_audio, sr, voice_characteristics.get("prosodic_patterns", {}), reference_audio
             )
             
-            # 4. Apply final normalization
-            enhanced_audio = librosa.util.normalize(enhanced_audio)
+            # 7. Dynamic range optimization
+            enhanced_audio = self._optimize_dynamic_range(enhanced_audio, reference_audio, sr)
             
-            # Save enhanced audio
+            # 8. Final quality enhancement and normalization
+            enhanced_audio = self._apply_final_quality_enhancement(enhanced_audio, sr)
+            
+            # Save enhanced audio with high quality
             enhanced_path = generated_audio_path.replace('.wav', '_enhanced.wav')
-            sf.write(enhanced_path, enhanced_audio, sr, format='WAV', subtype='PCM_16')
+            sf.write(enhanced_audio, enhanced_path, sr, format='WAV', subtype='PCM_24')
             
             # Replace original with enhanced version
             shutil.move(enhanced_path, generated_audio_path)
             
+            logger.info(f"Enhanced voice matching completed with artifact removal")
             return generated_audio_path
             
         except Exception as e:
@@ -1182,6 +1245,474 @@ class AdvancedVoiceCloningService:
             "voice_warmth": float(1.0 - (spectral_centroid / 4000)),
             "confidence_level": float(min(1.0, energy_mean * 5 + pitch_mean / 300))
         }
+
+    def _remove_dual_sound_artifacts(self, audio: np.ndarray, sr: int) -> np.ndarray:
+        """Remove dual sound artifacts and overlapping issues."""
+        try:
+            # 1. Detect and remove echo/delay artifacts
+            # Use autocorrelation to find repeating patterns
+            autocorr = np.correlate(audio, audio, mode='full')
+            autocorr = autocorr[len(autocorr)//2:]
+            
+            # Find potential echo delays (typically 50-500ms)
+            min_delay_samples = int(0.05 * sr)  # 50ms
+            max_delay_samples = int(0.5 * sr)   # 500ms
+            
+            # Look for secondary peaks that might indicate echo
+            search_region = autocorr[min_delay_samples:max_delay_samples]
+            if len(search_region) > 0:
+                peak_threshold = 0.3 * np.max(autocorr[:min_delay_samples])
+                potential_echoes = np.where(search_region > peak_threshold)[0]
+                
+                if len(potential_echoes) > 0:
+                    # Remove the strongest echo
+                    echo_delay = potential_echoes[0] + min_delay_samples
+                    echo_strength = search_region[potential_echoes[0]] / np.max(autocorr[:min_delay_samples])
+                    
+                    if echo_strength > 0.2:  # Significant echo detected
+                        # Create echo removal filter
+                        echo_audio = np.zeros_like(audio)
+                        if echo_delay < len(audio):
+                            echo_audio[echo_delay:] = audio[:-echo_delay] * echo_strength * 0.7
+                            audio = audio - echo_audio
+                            logger.info(f"Removed echo artifact with delay {echo_delay/sr:.3f}s")
+            
+            # 2. Remove overlapping frequency artifacts
+            # Use spectral subtraction for overlapping sounds
+            stft = librosa.stft(audio, n_fft=2048, hop_length=512)
+            magnitude = np.abs(stft)
+            phase = np.angle(stft)
+            
+            # Detect frequency bins with unusual energy patterns
+            freq_energy = np.mean(magnitude, axis=1)
+            freq_std = np.std(magnitude, axis=1)
+            
+            # Identify problematic frequency bins (high energy + high variance)
+            problematic_bins = np.where((freq_energy > np.percentile(freq_energy, 90)) & 
+                                      (freq_std > np.percentile(freq_std, 85)))[0]
+            
+            if len(problematic_bins) > 0:
+                # Apply gentle suppression to problematic frequencies
+                for bin_idx in problematic_bins:
+                    magnitude[bin_idx, :] *= 0.7  # Reduce by 30%
+                
+                # Reconstruct audio
+                enhanced_stft = magnitude * np.exp(1j * phase)
+                audio = librosa.istft(enhanced_stft, hop_length=512)
+                logger.info(f"Suppressed {len(problematic_bins)} problematic frequency bins")
+            
+            # 3. Apply temporal smoothing to reduce abrupt transitions
+            # Use a gentle low-pass filter on the envelope
+            rms = librosa.feature.rms(y=audio, frame_length=1024, hop_length=256)[0]
+            rms_smooth = scipy.signal.savgol_filter(rms, window_length=5, polyorder=2)
+            
+            # Apply smoothed envelope
+            rms_ratio = np.divide(rms_smooth, rms, out=np.ones_like(rms_smooth), where=rms!=0)
+            rms_ratio_interp = np.interp(np.arange(len(audio)), 
+                                       np.arange(0, len(audio), 256), rms_ratio)
+            audio = audio * rms_ratio_interp
+            
+            return audio.astype(np.float32)
+            
+        except Exception as e:
+            logger.warning(f"Dual sound artifact removal failed: {e}")
+            return audio
+
+    def _enhance_audio_clarity(self, audio: np.ndarray, sr: int) -> np.ndarray:
+        """Enhance audio clarity and remove noise artifacts."""
+        try:
+            # 1. Advanced noise reduction using spectral gating
+            stft = librosa.stft(audio, n_fft=2048, hop_length=512)
+            magnitude = np.abs(stft)
+            phase = np.angle(stft)
+            
+            # Estimate noise floor from quiet segments
+            rms = librosa.feature.rms(y=audio, frame_length=2048, hop_length=512)[0]
+            noise_threshold = np.percentile(rms, 20)  # Bottom 20% as noise estimate
+            noise_frames = rms < noise_threshold
+            
+            if np.sum(noise_frames) > 0:
+                noise_spectrum = np.mean(magnitude[:, noise_frames], axis=1, keepdims=True)
+                
+                # Apply spectral subtraction with over-subtraction factor
+                alpha = 2.0  # Over-subtraction factor
+                beta = 0.01  # Spectral floor factor
+                
+                enhanced_magnitude = magnitude - alpha * noise_spectrum
+                enhanced_magnitude = np.maximum(enhanced_magnitude, beta * magnitude)
+                
+                # Reconstruct audio
+                enhanced_stft = enhanced_magnitude * np.exp(1j * phase)
+                audio = librosa.istft(enhanced_stft, hop_length=512)
+            
+            # 2. Enhance vocal frequencies (300-3400 Hz)
+            # Apply gentle boost to speech frequencies
+            nyquist = sr / 2
+            vocal_low = 300 / nyquist
+            vocal_high = 3400 / nyquist
+            
+            # Design bandpass filter for vocal enhancement
+            b, a = butter(4, [vocal_low, vocal_high], btype='band')
+            vocal_enhanced = filtfilt(b, a, audio)
+            
+            # Mix with original (subtle enhancement)
+            audio = 0.8 * audio + 0.2 * vocal_enhanced
+            
+            # 3. Dynamic range compression for clarity
+            # Apply gentle compression to even out levels
+            threshold = 0.1
+            ratio = 3.0
+            attack_time = 0.003  # 3ms
+            release_time = 0.1   # 100ms
+            
+            # Simple compressor implementation
+            audio_abs = np.abs(audio)
+            compressed = np.copy(audio)
+            
+            # Find samples above threshold
+            above_threshold = audio_abs > threshold
+            if np.any(above_threshold):
+                # Apply compression
+                compression_factor = threshold + (audio_abs - threshold) / ratio
+                compression_ratio = np.divide(compression_factor, audio_abs, 
+                                            out=np.ones_like(audio_abs), where=audio_abs!=0)
+                compressed = audio * compression_ratio
+            
+            # 4. High-frequency enhancement for crispness
+            # Gentle high-shelf filter
+            high_freq = 2000 / nyquist
+            b, a = butter(2, high_freq, btype='high')
+            high_enhanced = filtfilt(b, a, compressed)
+            
+            # Mix with compressed audio (very subtle)
+            audio = 0.95 * compressed + 0.05 * high_enhanced
+            
+            return audio.astype(np.float32)
+            
+        except Exception as e:
+            logger.warning(f"Audio clarity enhancement failed: {e}")
+            return audio
+
+    def _remove_echo_artifacts(self, audio: np.ndarray, sr: int) -> np.ndarray:
+        """Remove echo and reverb artifacts from synthesized audio."""
+        try:
+            # 1. Adaptive echo cancellation
+            # Use LMS (Least Mean Squares) algorithm for echo removal
+            
+            # Parameters for echo detection
+            max_delay = int(0.5 * sr)  # Maximum 500ms delay
+            min_delay = int(0.02 * sr)  # Minimum 20ms delay
+            
+            # Detect echo using cepstral analysis
+            # Convert to cepstral domain
+            windowed_audio = audio * np.hanning(len(audio))
+            spectrum = np.fft.fft(windowed_audio)
+            log_spectrum = np.log(np.abs(spectrum) + 1e-10)
+            cepstrum = np.fft.ifft(log_spectrum).real
+            
+            # Look for peaks in cepstrum that indicate echo
+            cepstrum_search = cepstrum[min_delay:max_delay]
+            if len(cepstrum_search) > 0:
+                echo_peak_idx = np.argmax(np.abs(cepstrum_search))
+                echo_delay = echo_peak_idx + min_delay
+                echo_strength = np.abs(cepstrum_search[echo_peak_idx])
+                
+                # If significant echo detected, remove it
+                if echo_strength > 0.1:
+                    # Create echo signal
+                    echo_signal = np.zeros_like(audio)
+                    if echo_delay < len(audio):
+                        echo_signal[echo_delay:] = audio[:-echo_delay] * echo_strength * 0.5
+                        
+                        # Subtract echo from original
+                        audio = audio - echo_signal
+                        logger.info(f"Removed echo with delay {echo_delay/sr:.3f}s, strength {echo_strength:.3f}")
+            
+            # 2. Reverb reduction using spectral subtraction
+            # Estimate reverb tail from the end of the audio
+            tail_length = min(int(0.5 * sr), len(audio) // 4)  # Last 500ms or 25% of audio
+            if tail_length > 0:
+                reverb_tail = audio[-tail_length:]
+                reverb_spectrum = np.abs(np.fft.fft(reverb_tail, n=2048))
+                
+                # Apply reverb reduction across the entire audio
+                stft = librosa.stft(audio, n_fft=2048, hop_length=512)
+                magnitude = np.abs(stft)
+                phase = np.angle(stft)
+                
+                # Subtract estimated reverb spectrum
+                reverb_reduction_factor = 0.3
+                for i in range(magnitude.shape[1]):
+                    magnitude[:, i] = np.maximum(
+                        magnitude[:, i] - reverb_reduction_factor * reverb_spectrum[:magnitude.shape[0]],
+                        0.1 * magnitude[:, i]
+                    )
+                
+                # Reconstruct audio
+                enhanced_stft = magnitude * np.exp(1j * phase)
+                audio = librosa.istft(enhanced_stft, hop_length=512)
+            
+            return audio.astype(np.float32)
+            
+        except Exception as e:
+            logger.warning(f"Echo artifact removal failed: {e}")
+            return audio
+
+    def _match_pitch_characteristics_enhanced(self, audio: np.ndarray, sr: int, 
+                                           pitch_chars: Dict[str, Any], reference_audio: np.ndarray) -> np.ndarray:
+        """Enhanced pitch matching with artifact prevention."""
+        try:
+            if not pitch_chars:
+                return audio
+            
+            # Extract pitch from both audio signals
+            f0_synth, voiced_synth, _ = librosa.pyin(audio, fmin=80, fmax=400, sr=sr)
+            f0_ref, voiced_ref, _ = librosa.pyin(reference_audio, fmin=80, fmax=400, sr=sr)
+            
+            # Clean pitch tracks (remove outliers)
+            f0_synth_clean = f0_synth[voiced_synth & ~np.isnan(f0_synth)]
+            f0_ref_clean = f0_ref[voiced_ref & ~np.isnan(f0_ref)]
+            
+            if len(f0_synth_clean) == 0 or len(f0_ref_clean) == 0:
+                return audio
+            
+            # Calculate pitch statistics
+            synth_f0_mean = np.mean(f0_synth_clean)
+            ref_f0_mean = np.mean(f0_ref_clean)
+            
+            # Calculate pitch shift needed (limit to reasonable range)
+            pitch_shift_ratio = ref_f0_mean / synth_f0_mean
+            pitch_shift_ratio = np.clip(pitch_shift_ratio, 0.7, 1.4)  # Limit to ±40%
+            
+            if abs(pitch_shift_ratio - 1.0) > 0.05:  # Only shift if difference > 5%
+                # Convert to semitones
+                n_steps = 12 * np.log2(pitch_shift_ratio)
+                
+                # Apply pitch shift with high quality
+                audio = librosa.effects.pitch_shift(audio, sr=sr, n_steps=n_steps, 
+                                                  bins_per_octave=24)  # Higher resolution
+                
+                logger.info(f"Applied pitch shift: {n_steps:.2f} semitones")
+            
+            return audio.astype(np.float32)
+            
+        except Exception as e:
+            logger.warning(f"Enhanced pitch matching failed: {e}")
+            return audio
+
+    def _match_spectral_envelope_advanced(self, generated_audio: np.ndarray, 
+                                        reference_audio: np.ndarray, sr: int) -> np.ndarray:
+        """Advanced spectral envelope matching with artifact prevention."""
+        try:
+            # Compute spectrograms with higher resolution
+            gen_stft = librosa.stft(generated_audio, n_fft=4096, hop_length=1024)
+            ref_stft = librosa.stft(reference_audio, n_fft=4096, hop_length=1024)
+            
+            gen_magnitude = np.abs(gen_stft)
+            ref_magnitude = np.abs(ref_stft)
+            
+            # Calculate spectral envelopes using cepstral smoothing
+            gen_envelope = self._calculate_spectral_envelope_advanced(gen_magnitude)
+            ref_envelope = self._calculate_spectral_envelope_advanced(ref_magnitude)
+            
+            # Apply gradual spectral matching to avoid artifacts
+            matching_strength = 0.4  # Moderate matching to prevent artifacts
+            
+            # Calculate smoothed matching filter
+            envelope_ratio = np.divide(ref_envelope, gen_envelope, 
+                                     out=np.ones_like(ref_envelope), where=gen_envelope!=0)
+            
+            # Apply smoothing to the ratio to prevent sharp transitions
+            for i in range(envelope_ratio.shape[1]):
+                envelope_ratio[:, i] = scipy.signal.savgol_filter(
+                    envelope_ratio[:, i], window_length=21, polyorder=3
+                )
+            
+            # Apply partial matching
+            final_ratio = (1 - matching_strength) + matching_strength * envelope_ratio
+            
+            # Apply to generated audio
+            matched_magnitude = gen_magnitude * final_ratio
+            
+            # Reconstruct with original phase
+            matched_stft = matched_magnitude * np.exp(1j * np.angle(gen_stft))
+            matched_audio = librosa.istft(matched_stft, hop_length=1024)
+            
+            return matched_audio.astype(np.float32)
+            
+        except Exception as e:
+            logger.warning(f"Advanced spectral envelope matching failed: {e}")
+            return generated_audio
+
+    def _calculate_spectral_envelope_advanced(self, magnitude: np.ndarray) -> np.ndarray:
+        """Calculate spectral envelope using advanced cepstral analysis."""
+        try:
+            envelope = np.zeros_like(magnitude)
+            
+            for i in range(magnitude.shape[1]):
+                # Cepstral analysis for spectral envelope
+                log_magnitude = np.log(magnitude[:, i] + 1e-10)
+                cepstrum = np.fft.ifft(log_magnitude)
+                
+                # Lifter to keep only envelope information
+                liftered_cepstrum = cepstrum.copy()
+                lifter_length = len(cepstrum) // 20  # Keep 5% of coefficients
+                liftered_cepstrum[lifter_length:-lifter_length] = 0
+                
+                # Convert back to spectrum
+                envelope[:, i] = np.real(np.fft.fft(liftered_cepstrum))
+            
+            return np.exp(envelope)
+            
+        except Exception as e:
+            logger.warning(f"Advanced spectral envelope calculation failed: {e}")
+            return magnitude
+
+    def _match_prosodic_patterns_smooth(self, audio: np.ndarray, sr: int, 
+                                      prosody_chars: Dict[str, Any], reference_audio: np.ndarray) -> np.ndarray:
+        """Match prosodic patterns with smooth transitions."""
+        try:
+            if not prosody_chars:
+                return audio
+            
+            # Extract prosodic features from reference
+            ref_rms = librosa.feature.rms(y=reference_audio, hop_length=512)[0]
+            ref_tempo, _ = librosa.beat.beat_track(y=reference_audio, sr=sr)
+            
+            # Extract from synthesized audio
+            synth_rms = librosa.feature.rms(y=audio, hop_length=512)[0]
+            synth_tempo, _ = librosa.beat.beat_track(y=audio, sr=sr)
+            
+            # Apply tempo matching if needed
+            tempo_ratio = ref_tempo / synth_tempo if synth_tempo > 0 else 1.0
+            tempo_ratio = np.clip(tempo_ratio, 0.8, 1.25)  # Limit tempo changes
+            
+            if abs(tempo_ratio - 1.0) > 0.05:  # Only adjust if difference > 5%
+                audio = librosa.effects.time_stretch(audio, rate=1/tempo_ratio)
+                logger.info(f"Applied tempo adjustment: {tempo_ratio:.3f}")
+            
+            # Apply energy envelope matching
+            if len(ref_rms) > 1 and len(synth_rms) > 1:
+                # Normalize energy envelopes
+                ref_rms_norm = ref_rms / (np.mean(ref_rms) + 1e-10)
+                synth_rms_norm = synth_rms / (np.mean(synth_rms) + 1e-10)
+                
+                # Interpolate reference envelope to match synthesized length
+                ref_rms_interp = np.interp(
+                    np.linspace(0, 1, len(synth_rms)),
+                    np.linspace(0, 1, len(ref_rms)),
+                    ref_rms_norm
+                )
+                
+                # Apply gentle energy matching
+                energy_ratio = 0.7 * synth_rms_norm + 0.3 * ref_rms_interp
+                energy_ratio = energy_ratio / (np.mean(energy_ratio) + 1e-10)
+                
+                # Apply to audio with frame-based interpolation
+                energy_interp = np.interp(
+                    np.arange(len(audio)),
+                    np.arange(0, len(audio), 512),
+                    energy_ratio
+                )
+                
+                audio = audio * energy_interp
+            
+            return audio.astype(np.float32)
+            
+        except Exception as e:
+            logger.warning(f"Smooth prosodic matching failed: {e}")
+            return audio
+
+    def _optimize_dynamic_range(self, audio: np.ndarray, reference_audio: np.ndarray, sr: int) -> np.ndarray:
+        """Optimize dynamic range to match reference audio."""
+        try:
+            # Calculate dynamic range of both signals
+            audio_rms = librosa.feature.rms(y=audio)[0]
+            ref_rms = librosa.feature.rms(y=reference_audio)[0]
+            
+            audio_dr = np.max(audio_rms) / (np.min(audio_rms) + 1e-10)
+            ref_dr = np.max(ref_rms) / (np.min(ref_rms) + 1e-10)
+            
+            # Apply dynamic range matching if needed
+            if audio_dr > ref_dr * 1.5:  # Synthesized audio has too much dynamic range
+                # Apply gentle compression
+                threshold = np.percentile(np.abs(audio), 70)
+                ratio = 2.0
+                
+                audio_abs = np.abs(audio)
+                compressed = np.where(
+                    audio_abs > threshold,
+                    np.sign(audio) * (threshold + (audio_abs - threshold) / ratio),
+                    audio
+                )
+                audio = compressed
+                
+            elif audio_dr < ref_dr * 0.7:  # Synthesized audio lacks dynamic range
+                # Apply gentle expansion
+                expansion_factor = 1.2
+                audio = audio * expansion_factor
+                
+                # Ensure no clipping
+                max_val = np.max(np.abs(audio))
+                if max_val > 0.95:
+                    audio = audio * (0.95 / max_val)
+            
+            return audio.astype(np.float32)
+            
+        except Exception as e:
+            logger.warning(f"Dynamic range optimization failed: {e}")
+            return audio
+
+    def _apply_final_quality_enhancement(self, audio: np.ndarray, sr: int) -> np.ndarray:
+        """Apply final quality enhancement and normalization."""
+        try:
+            # 1. Remove any remaining DC offset
+            audio = audio - np.mean(audio)
+            
+            # 2. Apply gentle de-essing (reduce harsh sibilants)
+            # Focus on 4-8 kHz range where sibilants occur
+            nyquist = sr / 2
+            sibilant_low = 4000 / nyquist
+            sibilant_high = 8000 / nyquist
+            
+            if sibilant_high < 1.0:  # Ensure we're within Nyquist limit
+                # Extract sibilant frequencies
+                b, a = butter(4, [sibilant_low, sibilant_high], btype='band')
+                sibilant_signal = filtfilt(b, a, audio)
+                
+                # Apply gentle compression to sibilants
+                sibilant_threshold = np.percentile(np.abs(sibilant_signal), 85)
+                sibilant_compressed = np.where(
+                    np.abs(sibilant_signal) > sibilant_threshold,
+                    np.sign(sibilant_signal) * (sibilant_threshold + 
+                        (np.abs(sibilant_signal) - sibilant_threshold) * 0.5),
+                    sibilant_signal
+                )
+                
+                # Subtract over-compressed sibilants from original
+                audio = audio - (sibilant_signal - sibilant_compressed) * 0.3
+            
+            # 3. Apply final normalization with headroom
+            max_amplitude = np.max(np.abs(audio))
+            if max_amplitude > 0:
+                target_level = 0.85  # Leave some headroom
+                audio = audio * (target_level / max_amplitude)
+            
+            # 4. Apply gentle limiting to prevent any clipping
+            limit_threshold = 0.95
+            audio = np.clip(audio, -limit_threshold, limit_threshold)
+            
+            # 5. Final smoothing to remove any remaining artifacts
+            # Very gentle low-pass filter at high frequency
+            cutoff = 0.95 * nyquist  # 95% of Nyquist frequency
+            b, a = butter(2, cutoff / nyquist, btype='low')
+            audio = filtfilt(b, a, audio)
+            
+            return audio.astype(np.float32)
+            
+        except Exception as e:
+            logger.warning(f"Final quality enhancement failed: {e}")
+            return audio
 
 
 # Global service instance

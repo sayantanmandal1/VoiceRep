@@ -101,6 +101,18 @@ export default function SynthesisManager({
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string>('');
   const [showProgress, setShowProgress] = useState(false);
+  
+  // Regeneration state
+  const [showRegenerationPanel, setShowRegenerationPanel] = useState(false);
+  const [customText, setCustomText] = useState('');
+  const [voiceSettings, setVoiceSettings] = useState({
+    pitch_shift: 0.0,
+    speed_factor: 1.0,
+    emotion_intensity: 1.0,
+    volume_gain: 0.0
+  });
+  const [selectedLanguage, setSelectedLanguage] = useState('english');
+  
   const { addNotification } = useNotifications();
 
   // Progress steps for comprehensive synthesis tracking
@@ -159,7 +171,7 @@ export default function SynthesisManager({
   } = useProgressSteps(synthesisProgressSteps);
 
   // Start synthesis using the new API client
-  const startSynthesis = useCallback(async () => {
+  const startSynthesis = useCallback(async (useCustomSettings = false) => {
     if (!uploadedFile || !validatedText) {
       setError('Missing required data for synthesis');
       return;
@@ -177,17 +189,30 @@ export default function SynthesisManager({
       startStep('initialization');
       updateProgress('initialization', 30);
 
+      // Determine text and settings to use
+      const textToUse = useCustomSettings && customText.trim() 
+        ? customText.trim() 
+        : (validatedText.sanitized_text || validatedText.text);
+      
+      const languageToUse = useCustomSettings 
+        ? selectedLanguage 
+        : (validatedText.detected_language || 'english');
+      
+      const settingsToUse = useCustomSettings 
+        ? voiceSettings 
+        : {
+            pitch_shift: 0.0,
+            speed_factor: 1.0,
+            emotion_intensity: 1.0,
+            volume_gain: 0.0
+          };
+
       // Create synthesis request
       const synthesisRequest: SynthesisRequest = {
-        text: validatedText.sanitized_text || validatedText.text,
+        text: textToUse,
         voice_model_id: `voice_model_${uploadedFile.id}`,
-        language: validatedText.detected_language || 'english',
-        voice_settings: {
-          pitch_shift: 0.0,
-          speed_factor: 1.0,
-          emotion_intensity: 1.0,
-          volume_gain: 0.0
-        },
+        language: languageToUse,
+        voice_settings: settingsToUse,
         output_format: 'wav',
         quality: 'high'
       };
@@ -214,7 +239,9 @@ export default function SynthesisManager({
       addNotification({
         type: 'info',
         title: 'Synthesis Started',
-        message: 'Voice synthesis has begun. This may take a few moments.',
+        message: useCustomSettings 
+          ? 'Voice synthesis with custom settings has begun.' 
+          : 'Voice synthesis has begun. This may take a few moments.',
         duration: 4000
       });
 
@@ -253,7 +280,7 @@ export default function SynthesisManager({
         duration: 6000
       });
     }
-  }, [uploadedFile, validatedText, onError, addNotification, steps, startStep, updateProgress, completeStep, errorStep, resetSteps]);
+  }, [uploadedFile, validatedText, onError, addNotification, steps, startStep, updateProgress, completeStep, errorStep, resetSteps, customText, voiceSettings, selectedLanguage]);
 
   // Poll for synthesis progress using API client
   const pollProgress = useCallback(async (taskId: string) => {
@@ -926,7 +953,7 @@ export default function SynthesisManager({
           )}
 
           {/* New Synthesis Button */}
-          <div className="flex justify-center">
+          <div className="flex justify-center space-x-4">
             <button
               onClick={() => {
                 setSynthesisTask(null);
@@ -934,13 +961,223 @@ export default function SynthesisManager({
                 setProgress(null);
                 setError('');
                 setShowProgress(false);
+                setShowRegenerationPanel(false);
                 resetSteps();
               }}
               className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition-colors"
             >
               Create New Synthesis
             </button>
+            
+            {/* Regenerate with Same Settings Button */}
+            <button
+              onClick={() => startSynthesis(false)}
+              disabled={isProcessing}
+              className="px-6 py-3 bg-green-600 hover:bg-green-700 disabled:bg-gray-400 text-white font-medium rounded-lg transition-colors flex items-center space-x-2"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+              <span>Regenerate Voice</span>
+            </button>
+            
+            {/* Advanced Regeneration Button */}
+            <button
+              onClick={() => setShowRegenerationPanel(!showRegenerationPanel)}
+              className="px-6 py-3 bg-purple-600 hover:bg-purple-700 text-white font-medium rounded-lg transition-colors flex items-center space-x-2"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 100 4m0-4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 100 4m0-4v2m0-6V4" />
+              </svg>
+              <span>Advanced Options</span>
+            </button>
           </div>
+
+          {/* Advanced Regeneration Panel */}
+          {showRegenerationPanel && (
+            <div className="mt-6 p-6 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg">
+              <h4 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4 flex items-center">
+                <svg className="w-5 h-5 mr-2 text-purple-600 dark:text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 100 4m0-4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 100 4m0-4v2m0-6V4" />
+                </svg>
+                Advanced Synthesis Options
+              </h4>
+              
+              <div className="space-y-6">
+                {/* Custom Text Input */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                    Custom Text (Optional)
+                  </label>
+                  <textarea
+                    value={customText}
+                    onChange={(e) => setCustomText(e.target.value)}
+                    placeholder="Enter different text to synthesize with the same voice..."
+                    className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:ring-2 focus:ring-purple-500 focus:border-purple-500 dark:bg-gray-700 dark:text-gray-100 resize-none"
+                    rows={3}
+                  />
+                  <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                    Leave empty to use the original text. Maximum 500 characters recommended.
+                  </p>
+                </div>
+
+                {/* Language Selection */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                    Language
+                  </label>
+                  <select
+                    value={selectedLanguage}
+                    onChange={(e) => setSelectedLanguage(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:ring-2 focus:ring-purple-500 focus:border-purple-500 dark:bg-gray-700 dark:text-gray-100"
+                  >
+                    <option value="english">English</option>
+                    <option value="spanish">Spanish</option>
+                    <option value="french">French</option>
+                    <option value="german">German</option>
+                    <option value="italian">Italian</option>
+                    <option value="portuguese">Portuguese</option>
+                    <option value="russian">Russian</option>
+                    <option value="chinese">Chinese</option>
+                    <option value="japanese">Japanese</option>
+                    <option value="korean">Korean</option>
+                  </select>
+                </div>
+
+                {/* Voice Settings */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {/* Pitch Shift */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                      Pitch Shift: {voiceSettings.pitch_shift > 0 ? '+' : ''}{voiceSettings.pitch_shift.toFixed(1)}
+                    </label>
+                    <input
+                      type="range"
+                      min="-0.5"
+                      max="0.5"
+                      step="0.1"
+                      value={voiceSettings.pitch_shift}
+                      onChange={(e) => setVoiceSettings(prev => ({
+                        ...prev,
+                        pitch_shift: parseFloat(e.target.value)
+                      }))}
+                      className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer dark:bg-gray-700"
+                    />
+                    <div className="flex justify-between text-xs text-gray-500 dark:text-gray-400 mt-1">
+                      <span>Lower</span>
+                      <span>Normal</span>
+                      <span>Higher</span>
+                    </div>
+                  </div>
+
+                  {/* Speed Factor */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                      Speed: {voiceSettings.speed_factor.toFixed(1)}x
+                    </label>
+                    <input
+                      type="range"
+                      min="0.5"
+                      max="2.0"
+                      step="0.1"
+                      value={voiceSettings.speed_factor}
+                      onChange={(e) => setVoiceSettings(prev => ({
+                        ...prev,
+                        speed_factor: parseFloat(e.target.value)
+                      }))}
+                      className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer dark:bg-gray-700"
+                    />
+                    <div className="flex justify-between text-xs text-gray-500 dark:text-gray-400 mt-1">
+                      <span>0.5x</span>
+                      <span>1.0x</span>
+                      <span>2.0x</span>
+                    </div>
+                  </div>
+
+                  {/* Emotion Intensity */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                      Emotion Intensity: {voiceSettings.emotion_intensity.toFixed(1)}
+                    </label>
+                    <input
+                      type="range"
+                      min="0.0"
+                      max="2.0"
+                      step="0.1"
+                      value={voiceSettings.emotion_intensity}
+                      onChange={(e) => setVoiceSettings(prev => ({
+                        ...prev,
+                        emotion_intensity: parseFloat(e.target.value)
+                      }))}
+                      className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer dark:bg-gray-700"
+                    />
+                    <div className="flex justify-between text-xs text-gray-500 dark:text-gray-400 mt-1">
+                      <span>Flat</span>
+                      <span>Normal</span>
+                      <span>Expressive</span>
+                    </div>
+                  </div>
+
+                  {/* Volume Gain */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                      Volume: {voiceSettings.volume_gain > 0 ? '+' : ''}{voiceSettings.volume_gain.toFixed(1)} dB
+                    </label>
+                    <input
+                      type="range"
+                      min="-10.0"
+                      max="10.0"
+                      step="1.0"
+                      value={voiceSettings.volume_gain}
+                      onChange={(e) => setVoiceSettings(prev => ({
+                        ...prev,
+                        volume_gain: parseFloat(e.target.value)
+                      }))}
+                      className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer dark:bg-gray-700"
+                    />
+                    <div className="flex justify-between text-xs text-gray-500 dark:text-gray-400 mt-1">
+                      <span>-10dB</span>
+                      <span>0dB</span>
+                      <span>+10dB</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Reset and Generate Buttons */}
+                <div className="flex justify-between items-center pt-4 border-t border-gray-200 dark:border-gray-600">
+                  <button
+                    onClick={() => {
+                      setCustomText('');
+                      setVoiceSettings({
+                        pitch_shift: 0.0,
+                        speed_factor: 1.0,
+                        emotion_intensity: 1.0,
+                        volume_gain: 0.0
+                      });
+                      setSelectedLanguage(validatedText?.detected_language || 'english');
+                    }}
+                    className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-transparent border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+                  >
+                    Reset to Defaults
+                  </button>
+                  
+                  <button
+                    onClick={() => {
+                      setShowRegenerationPanel(false);
+                      startSynthesis(true);
+                    }}
+                    disabled={isProcessing}
+                    className="px-6 py-2 bg-purple-600 hover:bg-purple-700 disabled:bg-gray-400 text-white font-medium rounded-md transition-colors flex items-center space-x-2"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 14.142M9 9a3 3 0 000 6v-6a3 3 0 000-6zm0 0V7a2 2 0 012-2h4a2 2 0 012 2v2M9 9a3 3 0 000 6v-6a3 3 0 000-6z" />
+                    </svg>
+                    <span>Generate with Custom Settings</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
 

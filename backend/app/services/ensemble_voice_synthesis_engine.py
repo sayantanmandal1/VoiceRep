@@ -723,10 +723,14 @@ class EnsembleVoiceSynthesizer:
                     output_dir.mkdir(exist_ok=True)
                     output_path = output_dir / f"ensemble_synthesis_{int(time.time())}.wav"
                     
+                    # Convert language to model-specific format
+                    model_language = self._get_model_language_code(model_type, language)
+                    logger.info(f"Using language '{model_language}' for model {model_type.value} (original: '{language}')")
+                    
                     # Basic synthesis without reference audio - handle multi-speaker models
                     synthesis_kwargs = {
                         "text": text,
-                        "language": language
+                        "language": model_language
                     }
                     
                     # Check if model is multi-speaker and handle accordingly
@@ -932,6 +936,51 @@ class EnsembleVoiceSynthesizer:
             logger.error(f"Failed to prepare reference audio: {e}")
             return None
     
+    def _get_model_language_code(self, model_type: TTSModelType, language: str) -> str:
+        """Convert language to model-specific format."""
+        # Language code mappings for different models
+        language_mappings = {
+            TTSModelType.XTTS_V2: {
+                'english': 'en', 'spanish': 'es', 'french': 'fr', 'german': 'de',
+                'italian': 'it', 'portuguese': 'pt', 'polish': 'pl', 'turkish': 'tr',
+                'russian': 'ru', 'dutch': 'nl', 'czech': 'cs', 'arabic': 'ar',
+                'chinese': 'zh-cn', 'japanese': 'ja', 'hungarian': 'hu', 'korean': 'ko',
+                # Also support direct ISO codes
+                'en': 'en', 'es': 'es', 'fr': 'fr', 'de': 'de', 'it': 'it', 'pt': 'pt',
+                'pl': 'pl', 'tr': 'tr', 'ru': 'ru', 'nl': 'nl', 'cs': 'cs', 'ar': 'ar',
+                'zh-cn': 'zh-cn', 'ja': 'ja', 'hu': 'hu', 'ko': 'ko'
+            },
+            TTSModelType.BARK: {
+                'english': 'en', 'german': 'de', 'spanish': 'es', 'french': 'fr',
+                'hindi': 'hi', 'italian': 'it', 'japanese': 'ja', 'korean': 'ko',
+                'polish': 'pl', 'portuguese': 'pt', 'russian': 'ru', 'turkish': 'tr',
+                'chinese': 'zh',
+                # Also support direct ISO codes
+                'en': 'en', 'de': 'de', 'es': 'es', 'fr': 'fr', 'hi': 'hi', 'it': 'it',
+                'ja': 'ja', 'ko': 'ko', 'pl': 'pl', 'pt': 'pt', 'ru': 'ru', 'tr': 'tr', 'zh': 'zh'
+            },
+            TTSModelType.YOUR_TTS: {
+                'english': 'en', 'french': 'fr-fr', 'portuguese': 'pt-br', 'turkish': 'tr',
+                # Also support direct codes
+                'en': 'en', 'fr': 'fr-fr', 'pt': 'pt-br', 'tr': 'tr'
+            }
+        }
+        
+        model_mapping = language_mappings.get(model_type, {})
+        mapped_language = model_mapping.get(language.lower())
+        
+        if mapped_language:
+            return mapped_language
+        
+        # Fallback: check if language is already in supported format
+        model_config = self.model_configurations.get(model_type)
+        if model_config and language in model_config.languages:
+            return language
+            
+        # Default fallback to English
+        logger.warning(f"Language '{language}' not supported by {model_type.value}, falling back to English")
+        return model_mapping.get('english', 'en')
+
     async def _synthesize_with_model(
         self, 
         model_type: TTSModelType, 
@@ -947,6 +996,10 @@ class EnsembleVoiceSynthesizer:
             if not model:
                 return None
             
+            # Convert language to model-specific format
+            model_language = self._get_model_language_code(model_type, language)
+            logger.info(f"Using language '{model_language}' for model {model_type.value} (original: '{language}')")
+            
             # Create temporary output file
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_file:
                 temp_output_path = tmp_file.name
@@ -954,7 +1007,7 @@ class EnsembleVoiceSynthesizer:
             # Synthesize with the model
             synthesis_kwargs = {
                 "text": text,
-                "language": language
+                "language": model_language
             }
             
             # Add reference audio if available
@@ -972,7 +1025,30 @@ class EnsembleVoiceSynthesizer:
                     sf.write(temp_output_path, audio_data, self.sample_rate)
                     
             except Exception as synthesis_error:
-                if "multi-speaker" in str(synthesis_error).lower() or "speaker" in str(synthesis_error).lower():
+                error_msg = str(synthesis_error).lower()
+                
+                # Handle language-related errors
+                if "language" in error_msg and "not in" in error_msg:
+                    logger.warning(f"Language error with {model_type.value}: {synthesis_error}")
+                    # Try with fallback language (English)
+                    try:
+                        fallback_kwargs = synthesis_kwargs.copy()
+                        fallback_kwargs["language"] = self._get_model_language_code(model_type, "english")
+                        logger.info(f"Retrying {model_type.value} with fallback language: {fallback_kwargs['language']}")
+                        
+                        if hasattr(model, 'tts_to_file'):
+                            model.tts_to_file(file_path=temp_output_path, **fallback_kwargs)
+                        else:
+                            audio_data = model.tts(**fallback_kwargs)
+                            sf.write(temp_output_path, audio_data, self.sample_rate)
+                            
+                        logger.info(f"Synthesis successful with fallback language for {model_type.value}")
+                        
+                    except Exception as fallback_error:
+                        logger.error(f"Fallback language also failed for {model_type.value}: {fallback_error}")
+                        raise synthesis_error  # Re-raise original error
+                        
+                elif "multi-speaker" in error_msg or "speaker" in error_msg:
                     logger.info(f"Model {model_type.value} is multi-speaker, trying with default speaker")
                     
                     # Try with default speaker configurations
