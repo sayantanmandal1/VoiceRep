@@ -618,7 +618,7 @@ export default function SynthesisManager({
             </div>
             
             <button
-              onClick={startSynthesis}
+              onClick={() => startSynthesis()}
               disabled={isProcessing}
               className="inline-flex items-center px-8 py-4 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 disabled:from-gray-400 disabled:to-gray-500 text-white font-semibold rounded-lg shadow-lg hover:shadow-xl transform hover:scale-105 transition-all duration-200 disabled:cursor-not-allowed disabled:transform-none"
             >
@@ -656,7 +656,7 @@ export default function SynthesisManager({
           </div>
           <div className="mt-3 flex space-x-3">
             <button
-              onClick={startSynthesis}
+              onClick={() => startSynthesis()}
               className="px-4 py-2 text-sm font-medium text-red-700 dark:text-red-400 bg-transparent border border-red-300 dark:border-red-600 rounded-md hover:bg-red-50 dark:hover:bg-red-900/30 transition-colors"
             >
               Try Again
@@ -1241,7 +1241,7 @@ export default function SynthesisManager({
           <div className="flex space-x-3">
             {synthesisResult.metadata?.error_details?.is_retryable && (
               <button
-                onClick={startSynthesis}
+                onClick={() => startSynthesis()}
                 className="px-4 py-2 text-sm font-medium text-red-700 dark:text-red-400 bg-transparent border border-red-300 dark:border-red-600 rounded-md hover:bg-red-50 dark:hover:bg-red-900/30 transition-colors"
               >
                 Try Again
