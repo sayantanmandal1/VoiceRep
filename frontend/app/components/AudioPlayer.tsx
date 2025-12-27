@@ -61,6 +61,14 @@ export default function AudioPlayer({
       if (playerState.isPlaying) {
         audioRef.current.pause();
       } else {
+        // Stop all other audio elements before playing this one
+        const allAudio = document.querySelectorAll('audio');
+        allAudio.forEach(audio => {
+          if (audio !== audioRef.current) {
+            audio.pause();
+          }
+        });
+        
         await audioRef.current.play();
       }
     } catch (error) {
@@ -247,6 +255,16 @@ export default function AudioPlayer({
     document.addEventListener('keydown', handleKeyPress);
     return () => document.removeEventListener('keydown', handleKeyPress);
   }, [togglePlayPause, playerState.duration]);
+
+  // Cleanup audio when component unmounts
+  useEffect(() => {
+    return () => {
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current.currentTime = 0;
+      }
+    };
+  }, []);
 
   return (
     <div className={`bg-white dark:bg-gray-800 rounded-lg shadow-lg p-6 ${className}`}>

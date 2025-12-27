@@ -178,6 +178,13 @@ export default function SynthesisManager({
     }
 
     try {
+      // Stop any currently playing audio before starting new synthesis
+      const existingAudio = document.querySelectorAll('audio');
+      existingAudio.forEach(audio => {
+        audio.pause();
+        audio.currentTime = 0;
+      });
+
       setIsProcessing(true);
       setError('');
       setSynthesisResult(null);
@@ -281,6 +288,18 @@ export default function SynthesisManager({
       });
     }
   }, [uploadedFile, validatedText, onError, addNotification, steps, startStep, updateProgress, completeStep, errorStep, resetSteps, customText, voiceSettings, selectedLanguage]);
+
+  // Cleanup audio on component unmount
+  useEffect(() => {
+    return () => {
+      // Stop all audio when component unmounts
+      const existingAudio = document.querySelectorAll('audio');
+      existingAudio.forEach(audio => {
+        audio.pause();
+        audio.currentTime = 0;
+      });
+    };
+  }, []);
 
   // Poll for synthesis progress using API client
   const pollProgress = useCallback(async (taskId: string) => {
@@ -593,6 +612,15 @@ export default function SynthesisManager({
     return null;
   }
 
+  // Cleanup function to stop all audio
+  const stopAllAudio = () => {
+    const existingAudio = document.querySelectorAll('audio');
+    existingAudio.forEach(audio => {
+      audio.pause();
+      audio.currentTime = 0;
+    });
+  };
+
   return (
     <div className="border-t border-gray-200 dark:border-gray-700 pt-8">
       <h2 className="text-2xl font-semibold text-gray-900 dark:text-white mb-6">
@@ -753,6 +781,7 @@ export default function SynthesisManager({
 
           {/* Audio Player */}
           <AudioPlayer
+            key={synthesisResult.task_id} // Force remount on new synthesis
             audioUrl={apiClient.getAudioStreamUrl(synthesisResult.task_id)}
             title="Synthesized Speech"
             onDownload={handleDownloadComplete}
@@ -956,6 +985,13 @@ export default function SynthesisManager({
           <div className="flex justify-center space-x-4">
             <button
               onClick={() => {
+                // Stop any playing audio
+                const existingAudio = document.querySelectorAll('audio');
+                existingAudio.forEach(audio => {
+                  audio.pause();
+                  audio.currentTime = 0;
+                });
+                
                 setSynthesisTask(null);
                 setSynthesisResult(null);
                 setProgress(null);
@@ -1249,6 +1285,13 @@ export default function SynthesisManager({
             )}
             <button
               onClick={() => {
+                // Stop any playing audio
+                const existingAudio = document.querySelectorAll('audio');
+                existingAudio.forEach(audio => {
+                  audio.pause();
+                  audio.currentTime = 0;
+                });
+                
                 setSynthesisTask(null);
                 setSynthesisResult(null);
                 setProgress(null);
