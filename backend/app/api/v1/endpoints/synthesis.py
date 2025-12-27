@@ -231,6 +231,7 @@ async def run_enhanced_synthesis_task_async(
                     text=text,
                     voice_profile=voice_profile,
                     language=language,
+                    voice_settings=voice_settings,
                     progress_callback=progress_callback
                 )
                 

@@ -53,7 +53,7 @@ export default function AudioPlayer({
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
-  // Handle play/pause
+  // Handle play/pause with atomic audio control
   const togglePlayPause = useCallback(async () => {
     if (!audioRef.current) return;
 
@@ -61,14 +61,8 @@ export default function AudioPlayer({
       if (playerState.isPlaying) {
         audioRef.current.pause();
       } else {
-        // Stop all other audio elements before playing this one
-        const allAudio = document.querySelectorAll('audio');
-        allAudio.forEach(audio => {
-          if (audio !== audioRef.current) {
-            audio.pause();
-          }
-        });
-        
+        // Atomic operation: Stop all other audio elements before playing this one
+        await stopAllOtherAudio();
         await audioRef.current.play();
       }
     } catch (error) {
@@ -80,6 +74,34 @@ export default function AudioPlayer({
       }));
     }
   }, [playerState.isPlaying]);
+
+  // Helper function to atomically stop all other audio
+  const stopAllOtherAudio = useCallback(async (): Promise<void> => {
+    return new Promise((resolve) => {
+      const allAudio = document.querySelectorAll('audio');
+      let processedCount = 0;
+      const totalAudio = allAudio.length;
+      
+      if (totalAudio === 0) {
+        resolve();
+        return;
+      }
+      
+      allAudio.forEach(audio => {
+        if (audio !== audioRef.current) {
+          audio.pause();
+          audio.currentTime = 0;
+        }
+        processedCount++;
+        if (processedCount === totalAudio) {
+          resolve();
+        }
+      });
+      
+      // Fallback timeout to prevent hanging
+      setTimeout(resolve, 100);
+    });
+  }, []);
 
   // Handle seek
   const handleSeek = useCallback((event: React.MouseEvent<HTMLDivElement>) => {

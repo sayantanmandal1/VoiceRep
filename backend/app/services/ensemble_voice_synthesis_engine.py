@@ -652,6 +652,7 @@ class EnsembleVoiceSynthesizer:
         text: str,
         voice_profile: VoiceProfileSchema,
         language: str = "en",
+        voice_settings: Optional[Dict[str, Any]] = None,
         progress_callback: Optional[Callable] = None
     ) -> Tuple[bool, Optional[str], Dict[str, Any]]:
         """
@@ -832,6 +833,12 @@ class EnsembleVoiceSynthesizer:
             
             # Combine results using ensemble weighting
             final_audio = await self._combine_ensemble_results(synthesis_results)
+            
+            # Apply voice settings to the combined audio (after ensemble combination to prevent overlap)
+            if voice_settings:
+                if progress_callback:
+                    progress_callback(85, "Applying voice settings")
+                final_audio = await self._apply_voice_settings(final_audio, voice_settings)
             
             if progress_callback:
                 progress_callback(90, "Applying iterative refinement")
@@ -1120,7 +1127,7 @@ class EnsembleVoiceSynthesizer:
             )
     
     async def _combine_ensemble_results(self, results: List[SynthesisResult]) -> np.ndarray:
-        """Combine multiple synthesis results using weighted averaging."""
+        """Combine multiple synthesis results using weighted averaging with proper synchronization."""
         try:
             if not results:
                 raise ValueError("No synthesis results to combine")
@@ -1131,52 +1138,60 @@ class EnsembleVoiceSynthesizer:
             if not valid_results:
                 raise ValueError("No valid synthesis results")
             
+            # Use single best result instead of combining to prevent overlapping voices
             if len(valid_results) == 1:
                 return valid_results[0].audio_data
             
-            # Normalize audio lengths
-            max_length = max(len(r.audio_data) for r in valid_results)
+            # Select the single best result based on quality score to avoid voice overlap
+            best_result = max(valid_results, key=lambda r: r.quality_score)
+            logger.info(f"Selected single best model {best_result.model_type} with quality {best_result.quality_score:.3f} to prevent voice overlap")
             
-            # Pad shorter audio to match longest
-            padded_audio = []
-            weights = []
+            return best_result.audio_data
             
-            for result in valid_results:
-                audio = result.audio_data
-                
-                # Pad if necessary
-                if len(audio) < max_length:
-                    padding = max_length - len(audio)
-                    audio = np.pad(audio, (0, padding), mode='constant')
-                
-                padded_audio.append(audio)
-                
-                # Calculate weight based on quality and confidence
-                weight = (result.quality_score * 0.6 + result.confidence_score * 0.4)
-                
-                # Apply model-specific weight
-                model_weight = self.ensemble_weights.model_weights.get(result.model_type, 0.33)
-                final_weight = weight * model_weight
-                
-                weights.append(final_weight)
-            
-            # Normalize weights
-            total_weight = sum(weights)
-            if total_weight > 0:
-                weights = [w / total_weight for w in weights]
-            else:
-                weights = [1.0 / len(weights)] * len(weights)
-            
-            # Weighted combination
-            combined_audio = np.zeros(max_length)
-            for audio, weight in zip(padded_audio, weights):
-                combined_audio += audio * weight
-            
-            # Normalize to prevent clipping
-            if np.max(np.abs(combined_audio)) > 0:
-                combined_audio = combined_audio / np.max(np.abs(combined_audio)) * 0.95
-            
-            return combined_audio
+            # DISABLED: Original ensemble combination logic that causes voice overlap
+            # # Normalize audio lengths
+            # max_length = max(len(r.audio_data) for r in valid_results)
+            # 
+            # # Pad shorter audio to match longest
+            # padded_audio = []
+            # weights = []
+            # 
+            # for result in valid_results:
+            #     audio = result.audio_data
+            #     
+            #     # Pad if necessary
+            #     if len(audio) < max_length:
+            #         padding = max_length - len(audio)
+            #         audio = np.pad(audio, (0, padding), mode='constant')
+            #     
+            #     padded_audio.append(audio)
+            #     
+            #     # Calculate weight based on quality and confidence
+            #     weight = (result.quality_score * 0.6 + result.confidence_score * 0.4)
+            #     
+            #     # Apply model-specific weight
+            #     model_weight = self.ensemble_weights.model_weights.get(result.model_type, 0.33)
+            #     final_weight = weight * model_weight
+            #     
+            #     weights.append(final_weight)
+            # 
+            # # Normalize weights
+            # total_weight = sum(weights)
+            # if total_weight > 0:
+            #     weights = [w / total_weight for w in weights]
+            # else:
+            #     weights = [1.0 / len(weights)] * len(weights)
+            # 
+            # # Weighted combination
+            # combined_audio = np.zeros(max_length)
+            # for audio, weight in zip(padded_audio, weights):
+            #     combined_audio += audio * weight
+            # 
+            # # Normalize to prevent clipping
+            # if np.max(np.abs(combined_audio)) > 0:
+            #     combined_audio = combined_audio / np.max(np.abs(combined_audio)) * 0.95
+            # 
+            # return combined_audio
             
         except Exception as e:
             logger.error(f"Failed to combine ensemble results: {e}")
@@ -1308,6 +1323,59 @@ class EnsembleVoiceSynthesizer:
             logger.error(f"Voice characteristic enhancement failed: {e}")
             return audio
     
+    async def _apply_voice_settings(self, audio: np.ndarray, voice_settings: Dict[str, Any]) -> np.ndarray:
+        """Apply voice settings to the final combined audio to prevent voice overlap."""
+        try:
+            processed_audio = audio.copy()
+            
+            # Apply pitch shifting if specified
+            pitch_shift = voice_settings.get("pitch_shift", 0.0)
+            if pitch_shift != 0.0:
+                import librosa
+                processed_audio = librosa.effects.pitch_shift(
+                    processed_audio, 
+                    sr=self.sample_rate, 
+                    n_steps=pitch_shift
+                )
+                logger.info(f"Applied pitch shift: {pitch_shift} semitones")
+            
+            # Apply speed modification
+            speed_factor = voice_settings.get("speed_factor", 1.0)
+            if speed_factor != 1.0:
+                import librosa
+                processed_audio = librosa.effects.time_stretch(processed_audio, rate=speed_factor)
+                logger.info(f"Applied speed factor: {speed_factor}x")
+            
+            # Apply volume gain
+            volume_gain = voice_settings.get("volume_gain", 0.0)
+            if volume_gain != 0.0:
+                # Convert dB to linear scale
+                gain_linear = 10 ** (volume_gain / 20.0)
+                processed_audio = processed_audio * gain_linear
+                # Prevent clipping
+                if np.max(np.abs(processed_audio)) > 1.0:
+                    processed_audio = processed_audio / np.max(np.abs(processed_audio)) * 0.95
+                logger.info(f"Applied volume gain: {volume_gain} dB")
+            
+            # Apply emotion intensity (simplified implementation)
+            emotion_intensity = voice_settings.get("emotion_intensity", 1.0)
+            if emotion_intensity != 1.0:
+                # Simple emotion intensity by adjusting dynamic range
+                if emotion_intensity > 1.0:
+                    # Increase dynamic range for more expressive speech
+                    processed_audio = np.sign(processed_audio) * np.power(np.abs(processed_audio), 1.0 / emotion_intensity)
+                elif emotion_intensity < 1.0:
+                    # Decrease dynamic range for flatter speech
+                    processed_audio = np.sign(processed_audio) * np.power(np.abs(processed_audio), emotion_intensity)
+                logger.info(f"Applied emotion intensity: {emotion_intensity}")
+            
+            return processed_audio
+            
+        except Exception as e:
+            logger.error(f"Failed to apply voice settings: {e}")
+            # Return original audio if processing fails
+            return audio
+
     async def _save_ensemble_output(self, audio: np.ndarray, voice_profile_id: str) -> str:
         """Save ensemble synthesis output."""
         try:

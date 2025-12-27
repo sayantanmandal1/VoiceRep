@@ -170,6 +170,32 @@ export default function SynthesisManager({
     resetSteps
   } = useProgressSteps(synthesisProgressSteps);
 
+  // Cleanup function to stop all audio atomically
+  const stopAllAudio = useCallback(async (): Promise<void> => {
+    return new Promise((resolve) => {
+      const existingAudio = document.querySelectorAll('audio');
+      let stoppedCount = 0;
+      const totalAudio = existingAudio.length;
+      
+      if (totalAudio === 0) {
+        resolve();
+        return;
+      }
+      
+      existingAudio.forEach(audio => {
+        audio.pause();
+        audio.currentTime = 0;
+        stoppedCount++;
+        if (stoppedCount === totalAudio) {
+          resolve();
+        }
+      });
+      
+      // Fallback timeout to prevent hanging
+      setTimeout(resolve, 100);
+    });
+  }, []);
+
   // Start synthesis using the new API client
   const startSynthesis = useCallback(async (useCustomSettings = false) => {
     if (!uploadedFile || !validatedText) {
@@ -178,12 +204,8 @@ export default function SynthesisManager({
     }
 
     try {
-      // Stop any currently playing audio before starting new synthesis
-      const existingAudio = document.querySelectorAll('audio');
-      existingAudio.forEach(audio => {
-        audio.pause();
-        audio.currentTime = 0;
-      });
+      // Atomically stop any currently playing audio before starting new synthesis
+      await stopAllAudio();
 
       setIsProcessing(true);
       setError('');
@@ -287,19 +309,15 @@ export default function SynthesisManager({
         duration: 6000
       });
     }
-  }, [uploadedFile, validatedText, onError, addNotification, steps, startStep, updateProgress, completeStep, errorStep, resetSteps, customText, voiceSettings, selectedLanguage]);
+  }, [uploadedFile, validatedText, onError, addNotification, steps, startStep, updateProgress, completeStep, errorStep, resetSteps, customText, voiceSettings, selectedLanguage, stopAllAudio]);
 
   // Cleanup audio on component unmount
   useEffect(() => {
     return () => {
-      // Stop all audio when component unmounts
-      const existingAudio = document.querySelectorAll('audio');
-      existingAudio.forEach(audio => {
-        audio.pause();
-        audio.currentTime = 0;
-      });
+      // Atomically stop all audio when component unmounts
+      stopAllAudio();
     };
-  }, []);
+  }, [stopAllAudio]);
 
   // Poll for synthesis progress using API client
   const pollProgress = useCallback(async (taskId: string) => {
@@ -611,15 +629,6 @@ export default function SynthesisManager({
   if (!uploadedFile || !validatedText) {
     return null;
   }
-
-  // Cleanup function to stop all audio
-  const stopAllAudio = () => {
-    const existingAudio = document.querySelectorAll('audio');
-    existingAudio.forEach(audio => {
-      audio.pause();
-      audio.currentTime = 0;
-    });
-  };
 
   return (
     <div className="border-t border-gray-200 dark:border-gray-700 pt-8">
@@ -984,13 +993,9 @@ export default function SynthesisManager({
           {/* New Synthesis Button */}
           <div className="flex justify-center space-x-4">
             <button
-              onClick={() => {
-                // Stop any playing audio
-                const existingAudio = document.querySelectorAll('audio');
-                existingAudio.forEach(audio => {
-                  audio.pause();
-                  audio.currentTime = 0;
-                });
+              onClick={async () => {
+                // Atomically stop any playing audio
+                await stopAllAudio();
                 
                 setSynthesisTask(null);
                 setSynthesisResult(null);
@@ -1284,13 +1289,9 @@ export default function SynthesisManager({
               </button>
             )}
             <button
-              onClick={() => {
-                // Stop any playing audio
-                const existingAudio = document.querySelectorAll('audio');
-                existingAudio.forEach(audio => {
-                  audio.pause();
-                  audio.currentTime = 0;
-                });
+              onClick={async () => {
+                // Atomically stop any playing audio
+                await stopAllAudio();
                 
                 setSynthesisTask(null);
                 setSynthesisResult(null);
