@@ -4360,3 +4360,350 @@ class CoarticulationSmoother:
             formants.append(defaults[len(formants)])
         
         return formants[:num_formants]
+
+
+# =============================================================================
+# UNIFIED MICRO-EXPRESSION INJECTOR
+# =============================================================================
+
+@dataclass
+class MicroExpressionConfig:
+    """Configuration for micro-expression injection."""
+    enable_breathing: bool = True
+    enable_hesitations: bool = True
+    enable_lip_smacks: bool = True
+    enable_coarticulation: bool = True
+    breathing_intensity: float = 0.8
+    hesitation_frequency: float = 0.5
+    lip_smack_frequency: float = 0.3
+    coarticulation_strength: float = 0.7
+
+
+@dataclass
+class MicroExpressionResult:
+    """Result of micro-expression injection."""
+    audio: np.ndarray
+    sample_rate: int
+    breaths_injected: int
+    hesitations_injected: int
+    lip_smacks_injected: int
+    coarticulation_regions_smoothed: int
+    processing_time: float
+    quality_improvement: float
+
+
+class MicroExpressionInjector:
+    """
+    Unified micro-expression injector that combines all micro-expression features.
+    
+    This class orchestrates:
+    1. Breathing pattern analysis and injection
+    2. Hesitation and filler sound injection
+    3. Lip smack and mouth sound injection
+    4. Coarticulation smoothing
+    
+    Goal: Make synthesized speech indistinguishable from real human speech
+    by adding subtle human-like details.
+    
+    Requirements: 5.1, 5.2, 5.3, 5.4
+    """
+    
+    def __init__(
+        self,
+        sample_rate: int = 22050,
+        config: Optional[MicroExpressionConfig] = None
+    ):
+        """
+        Initialize the unified micro-expression injector.
+        
+        Args:
+            sample_rate: Audio sample rate
+            config: Configuration for injection parameters
+        """
+        self.sample_rate = sample_rate
+        self.config = config or MicroExpressionConfig()
+        
+        # Initialize component analyzers and injectors
+        self.breathing_analyzer = BreathingPatternAnalyzer(sample_rate)
+        self.breathing_injector = NaturalBreathingInjector(sample_rate)
+        self.hesitation_analyzer = HesitationPatternAnalyzer(sample_rate)
+        self.hesitation_injector = HesitationInjector(sample_rate)
+        self.lip_smack_analyzer = LipSmackPatternAnalyzer(sample_rate)
+        self.lip_smack_injector = LipSmackInjector(sample_rate)
+        self.coarticulation_smoother = CoarticulationSmoother(sample_rate)
+        
+        # Cached patterns from reference audio
+        self._breathing_pattern: Optional[BreathingPattern] = None
+        self._hesitation_pattern: Optional[HesitationPattern] = None
+        self._lip_smack_pattern: Optional[LipSmackPattern] = None
+        
+        logger.info("MicroExpressionInjector initialized")
+    
+    def analyze_reference_audio(
+        self,
+        reference_audio: np.ndarray,
+        sample_rate: Optional[int] = None
+    ) -> Dict[str, Any]:
+        """
+        Analyze reference audio to extract all micro-expression patterns.
+        
+        This method extracts breathing, hesitation, and lip smack patterns
+        from the reference audio for later injection into synthesized speech.
+        
+        Args:
+            reference_audio: Reference audio array
+            sample_rate: Sample rate (uses default if not provided)
+            
+        Returns:
+            Dictionary with analysis results for all micro-expression types
+        """
+        import time
+        start_time = time.time()
+        
+        sr = sample_rate or self.sample_rate
+        
+        # Resample if needed
+        if sr != self.sample_rate:
+            reference_audio = librosa.resample(
+                reference_audio, orig_sr=sr, target_sr=self.sample_rate
+            )
+            sr = self.sample_rate
+        
+        results = {
+            'breathing': None,
+            'hesitation': None,
+            'lip_smack': None,
+            'analysis_time': 0.0
+        }
+        
+        # Analyze breathing patterns
+        if self.config.enable_breathing:
+            try:
+                breathing_result = self.breathing_analyzer.analyze_breathing_patterns(
+                    reference_audio, sr
+                )
+                self._breathing_pattern = breathing_result.pattern
+                results['breathing'] = {
+                    'num_events': len(breathing_result.pattern.breath_events),
+                    'breathing_rate': breathing_result.pattern.breathing_rate,
+                    'quality_score': breathing_result.quality_score,
+                    'confidence': breathing_result.confidence
+                }
+            except Exception as e:
+                logger.warning(f"Breathing analysis failed: {e}")
+        
+        # Analyze hesitation patterns
+        if self.config.enable_hesitations:
+            try:
+                hesitation_result = self.hesitation_analyzer.analyze_hesitation_patterns(
+                    reference_audio, sr
+                )
+                self._hesitation_pattern = hesitation_result.pattern
+                results['hesitation'] = {
+                    'num_events': len(hesitation_result.pattern.hesitation_events),
+                    'hesitation_rate': hesitation_result.pattern.hesitation_rate,
+                    'quality_score': hesitation_result.quality_score,
+                    'confidence': hesitation_result.confidence
+                }
+            except Exception as e:
+                logger.warning(f"Hesitation analysis failed: {e}")
+        
+        # Analyze lip smack patterns
+        if self.config.enable_lip_smacks:
+            try:
+                lip_smack_result = self.lip_smack_analyzer.analyze_lip_smack_patterns(
+                    reference_audio, sr
+                )
+                self._lip_smack_pattern = lip_smack_result.pattern
+                results['lip_smack'] = {
+                    'num_events': len(lip_smack_result.pattern.lip_smack_events),
+                    'lip_smack_rate': lip_smack_result.pattern.lip_smack_rate,
+                    'quality_score': lip_smack_result.quality_score,
+                    'confidence': lip_smack_result.confidence
+                }
+            except Exception as e:
+                logger.warning(f"Lip smack analysis failed: {e}")
+        
+        results['analysis_time'] = time.time() - start_time
+        
+        logger.info(f"Reference audio analysis complete in {results['analysis_time']:.2f}s")
+        return results
+    
+    def inject_micro_expressions(
+        self,
+        synthesized_audio: np.ndarray,
+        sample_rate: Optional[int] = None,
+        reference_audio: Optional[np.ndarray] = None
+    ) -> MicroExpressionResult:
+        """
+        Inject micro-expressions into synthesized audio.
+        
+        This method applies all enabled micro-expression injections:
+        1. Natural breathing at phrase boundaries
+        2. Hesitations and fillers at appropriate points
+        3. Lip smacks and mouth sounds
+        4. Coarticulation smoothing
+        
+        Args:
+            synthesized_audio: Synthesized audio to enhance
+            sample_rate: Sample rate (uses default if not provided)
+            reference_audio: Optional reference audio for on-the-fly analysis
+            
+        Returns:
+            MicroExpressionResult with enhanced audio and statistics
+        """
+        import time
+        start_time = time.time()
+        
+        sr = sample_rate or self.sample_rate
+        
+        # Resample if needed
+        if sr != self.sample_rate:
+            synthesized_audio = librosa.resample(
+                synthesized_audio, orig_sr=sr, target_sr=self.sample_rate
+            )
+            sr = self.sample_rate
+        
+        # Analyze reference audio if provided and patterns not cached
+        if reference_audio is not None and self._breathing_pattern is None:
+            self.analyze_reference_audio(reference_audio, sr)
+        
+        # Track statistics
+        breaths_injected = 0
+        hesitations_injected = 0
+        lip_smacks_injected = 0
+        coarticulation_regions = 0
+        
+        # Start with the original audio
+        enhanced_audio = synthesized_audio.copy()
+        
+        # 1. Inject breathing
+        if self.config.enable_breathing and self._breathing_pattern is not None:
+            try:
+                breath_result = self.breathing_injector.inject_breathing(
+                    enhanced_audio,
+                    self._breathing_pattern,
+                    sr,
+                    intensity_scale=self.config.breathing_intensity
+                )
+                enhanced_audio = breath_result.audio
+                breaths_injected = breath_result.breaths_injected
+            except Exception as e:
+                logger.warning(f"Breathing injection failed: {e}")
+        
+        # 2. Inject hesitations
+        if self.config.enable_hesitations and self._hesitation_pattern is not None:
+            try:
+                hesitation_result = self.hesitation_injector.inject_hesitations(
+                    enhanced_audio,
+                    self._hesitation_pattern,
+                    sr,
+                    frequency_scale=self.config.hesitation_frequency
+                )
+                enhanced_audio = hesitation_result.audio
+                hesitations_injected = hesitation_result.hesitations_injected
+            except Exception as e:
+                logger.warning(f"Hesitation injection failed: {e}")
+        
+        # 3. Inject lip smacks
+        if self.config.enable_lip_smacks and self._lip_smack_pattern is not None:
+            try:
+                lip_smack_result = self.lip_smack_injector.inject_lip_smacks(
+                    enhanced_audio,
+                    self._lip_smack_pattern,
+                    sr,
+                    frequency_scale=self.config.lip_smack_frequency
+                )
+                enhanced_audio = lip_smack_result.audio
+                lip_smacks_injected = lip_smack_result.lip_smacks_injected
+            except Exception as e:
+                logger.warning(f"Lip smack injection failed: {e}")
+        
+        # 4. Apply coarticulation smoothing
+        if self.config.enable_coarticulation:
+            try:
+                coarticulation_result = self.coarticulation_smoother.smooth_coarticulation(
+                    enhanced_audio,
+                    sr,
+                    strength=self.config.coarticulation_strength
+                )
+                enhanced_audio = coarticulation_result.audio
+                coarticulation_regions = coarticulation_result.regions_smoothed
+            except Exception as e:
+                logger.warning(f"Coarticulation smoothing failed: {e}")
+        
+        # Calculate quality improvement
+        quality_improvement = self._estimate_quality_improvement(
+            synthesized_audio, enhanced_audio, sr
+        )
+        
+        processing_time = time.time() - start_time
+        
+        logger.info(
+            f"Micro-expression injection complete: "
+            f"{breaths_injected} breaths, {hesitations_injected} hesitations, "
+            f"{lip_smacks_injected} lip smacks, {coarticulation_regions} coarticulation regions"
+        )
+        
+        return MicroExpressionResult(
+            audio=enhanced_audio,
+            sample_rate=sr,
+            breaths_injected=breaths_injected,
+            hesitations_injected=hesitations_injected,
+            lip_smacks_injected=lip_smacks_injected,
+            coarticulation_regions_smoothed=coarticulation_regions,
+            processing_time=processing_time,
+            quality_improvement=quality_improvement
+        )
+    
+    def _estimate_quality_improvement(
+        self,
+        original: np.ndarray,
+        enhanced: np.ndarray,
+        sr: int
+    ) -> float:
+        """
+        Estimate the quality improvement from micro-expression injection.
+        
+        Args:
+            original: Original synthesized audio
+            enhanced: Enhanced audio with micro-expressions
+            sr: Sample rate
+            
+        Returns:
+            Estimated quality improvement (0-1)
+        """
+        try:
+            # Compare spectral characteristics
+            orig_mfcc = librosa.feature.mfcc(y=original, sr=sr, n_mfcc=13)
+            enh_mfcc = librosa.feature.mfcc(y=enhanced, sr=sr, n_mfcc=13)
+            
+            # Calculate spectral diversity (more diverse = more natural)
+            orig_diversity = np.std(orig_mfcc)
+            enh_diversity = np.std(enh_mfcc)
+            
+            diversity_improvement = (enh_diversity - orig_diversity) / (orig_diversity + 1e-8)
+            
+            # Normalize to 0-1 range
+            improvement = np.clip(diversity_improvement * 0.5 + 0.5, 0, 1)
+            
+            return float(improvement)
+        except Exception:
+            return 0.5  # Default moderate improvement
+    
+    def clear_cached_patterns(self):
+        """Clear all cached micro-expression patterns."""
+        self._breathing_pattern = None
+        self._hesitation_pattern = None
+        self._lip_smack_pattern = None
+        logger.info("Cached micro-expression patterns cleared")
+
+
+# Global instance for easy access
+micro_expression_injector = MicroExpressionInjector()
+
+
+async def initialize_micro_expression_service():
+    """Initialize the micro-expression injection service."""
+    logger.info("Micro-expression injection service initialized")
+    return True

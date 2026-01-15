@@ -92,21 +92,9 @@ async def lifespan(app: FastAPI):
             logger.error(f"Voice synthesis service failed to initialize after retries: {e}")
             logger.info("Application will continue with limited functionality")
         
-        # Initialize ensemble voice synthesis service
-        logger.info("Initializing ensemble voice synthesis service...")
-        try:
-            ensemble_service_ready = await initialize_with_fallback(
-                initialize_ensemble_synthesis_service,
-                max_retries=2,
-                delay=5
-            )
-            if ensemble_service_ready:
-                logger.info("Ensemble voice synthesis service initialized successfully")
-            else:
-                logger.warning("Ensemble synthesis service initialization failed - falling back to single model synthesis")
-        except Exception as e:
-            logger.error(f"Ensemble synthesis service failed to initialize after retries: {e}")
-            logger.info("Application will continue with single model synthesis")
+        # Skip ensemble voice synthesis service for faster startup
+        # It will be initialized lazily on first use
+        logger.info("Skipping ensemble voice synthesis service initialization (will initialize on first use)")
         
         # Initialize performance optimization service
         logger.info("Initializing performance optimization service...")
@@ -139,20 +127,8 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.error(f"Optimized voice analysis service failed to initialize: {e}")
         
-        # Initialize optimized synthesis service
-        logger.info("Initializing optimized synthesis service...")
-        try:
-            synthesis_service_ready = await initialize_with_fallback(
-                initialize_optimized_synthesis,
-                max_retries=1,
-                delay=1
-            )
-            if synthesis_service_ready:
-                logger.info("Optimized synthesis service initialized successfully")
-            else:
-                logger.warning("Optimized synthesis service initialization failed")
-        except Exception as e:
-            logger.error(f"Optimized synthesis service failed to initialize: {e}")
+        # Initialize optimized synthesis service (skip model warm-up for faster startup)
+        logger.info("Skipping optimized synthesis service warm-up (will initialize on first use)")
         
         logger.info("Application startup completed successfully")
         

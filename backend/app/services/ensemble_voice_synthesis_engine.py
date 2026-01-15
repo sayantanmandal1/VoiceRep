@@ -1032,7 +1032,30 @@ class IntelligentFusionEngine:
         logger.info(f"Intelligent fusion complete: {num_segments} segments, "
                    f"contributions: {model_contribution_percentages}")
         
-        return fused_audio, fusion_stats_segment = ref_audio[start_sample:end_sample]
+        return fused_audio, fusion_stats
+    
+    def _calculate_segment_scores(
+        self,
+        results: List[SynthesisResult],
+        ref_audio: np.ndarray,
+        sample_rate: int
+    ) -> Dict[TTSModelType, List[SegmentQualityScore]]:
+        """Calculate quality scores for each segment of each model's output."""
+        segment_duration_samples = int(
+            self.config.segment_duration_ms * sample_rate / 1000
+        )
+        
+        segment_scores = {}
+        
+        for result in results:
+            audio = result.audio_data
+            scores = []
+            
+            for i in range(0, len(audio), segment_duration_samples):
+                start_sample = i
+                end_sample = min(i + segment_duration_samples, len(audio))
+                segment = audio[start_sample:end_sample]
+                ref_segment = ref_audio[start_sample:end_sample] if start_sample < len(ref_audio) else np.zeros_like(segment)
                 
                 if len(segment) < 100:  # Skip very short segments
                     continue
