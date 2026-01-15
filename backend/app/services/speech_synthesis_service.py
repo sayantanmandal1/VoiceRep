@@ -22,7 +22,7 @@ from TTS.api import TTS
 from app.schemas.voice import VoiceModelSchema, VoiceProfileSchema
 from app.core.config import settings
 # Import real voice synthesis service
-from app.services.real_voice_synthesis_service import real_voice_synthesis_service
+from app.services.real_voice_synthesis_service import advanced_voice_cloning_service as real_voice_synthesis_service
 # Import ensemble voice synthesis engine
 from app.services.ensemble_voice_synthesis_engine import ensemble_voice_synthesizer
 

@@ -13,35 +13,29 @@ alembic==1.13.1
 redis==5.0.1
 celery==5.3.4
 
-# Audio processing - ESSENTIAL for advanced voice cloning
+# Audio processing
 librosa==0.10.1
 soundfile==0.12.1
 scipy==1.11.4
 numpy==1.24.3
 
-# Advanced signal processing for voice matching
+# Machine Learning
 scikit-learn==1.3.2
 
-# Machine Learning / AI - ESSENTIAL for voice cloning
-# CUDA-enabled PyTorch for GPU acceleration (installed with CUDA 12.1)
-torch>=2.5.0,<2.6.0
-torchaudio>=2.5.0,<2.6.0
-torchvision>=0.20.0,<0.21.0
-# Install CUDA version with: pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+# PyTorch (CPU version for Docker)
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.1.0+cpu
+torchaudio==2.1.0+cpu
 
-# Advanced TTS and Voice Cloning - CORE FUNCTIONALITY
-# Pin to compatible version that works with current transformers
-TTS==0.22.0
-
-# Transformers - pin to compatible version
+# Transformers
 transformers>=4.21.0,<4.36.0
 
-# Additional voice processing libraries
-pyworld==0.3.4
-praat-parselmouth==0.4.3
+# Text-to-Speech (Coqui TTS)
+TTS>=0.22.0
 
 # Audio processing utilities
 ffmpeg-python==0.2.0
+noisereduce>=3.0.0
 
 # Language detection
 langdetect==1.0.9
@@ -49,6 +43,7 @@ langdetect==1.0.9
 # HTTP client
 httpx==0.25.2
 aiofiles==23.2.1
+requests==2.31.0
 
 # Environment management
 python-dotenv==1.0.0
@@ -56,29 +51,15 @@ python-dotenv==1.0.0
 # Progress tracking
 tqdm==4.66.1
 
-# CORS - use standard fastapi cors
-# fastapi-cors==0.0.6  # Removed - use fastapi.middleware.cors instead
-
 # Session management
 itsdangerous==2.1.2
 
-# File type detection
+# File handling
 python-magic==0.4.27
+filetype==1.2.0
 
 # JSON handling
 orjson==3.9.10
-
-# Additional FastAPI utilities
-# fastapi-limiter==0.1.6  # Removed - implement custom rate limiting
-
-# Health checks
-# healthcheck==1.3.3  # Removed - implement custom health checks
-
-# File validation
-filetype==1.2.0
-
-# Additional HTTP utilities
-requests==2.31.0
 
 # Additional utilities
 click==8.1.7

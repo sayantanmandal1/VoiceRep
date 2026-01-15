@@ -27,7 +27,10 @@ import weakref
 # GPU and ML optimization imports
 import torch
 import torch.cuda
-from torch.amp import GradScaler
+try:
+    from torch.amp import GradScaler
+except ImportError:
+    from torch.cuda.amp import GradScaler
 
 # Internal imports
 from app.core.config import settings

@@ -63,6 +63,15 @@ from TTS.api import TTS
 from app.core.config import settings
 from app.services.enhanced_audio_processor import enhanced_audio_processor
 
+# Import perfect voice cloning components
+try:
+    from app.services.perfect_voice_cloning_service import (
+        PerfectVoiceCloningService, get_perfect_cloning_service
+    )
+    PERFECT_CLONING_AVAILABLE = True
+except ImportError:
+    PERFECT_CLONING_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 class AdvancedVoiceCloningService:
@@ -1713,6 +1722,109 @@ class AdvancedVoiceCloningService:
         except Exception as e:
             logger.warning(f"Final quality enhancement failed: {e}")
             return audio
+    
+    async def synthesize_perfect_clone(
+        self,
+        text: str,
+        reference_audio_path: str,
+        output_path: str,
+        language: str = "en",
+        progress_callback: Optional[Callable] = None
+    ) -> Dict[str, Any]:
+        """
+        Synthesize speech using the Perfect Voice Cloning pipeline.
+        
+        This method uses all advanced components for maximum voice cloning fidelity:
+        - Multi-encoder speaker embeddings (ECAPA-TDNN, WavLM, Resemblyzer)
+        - Reference audio optimization
+        - Intelligent model selection
+        - Neural vocoder enhancement
+        - Spectral matching
+        - Automatic quality validation and regeneration
+        
+        Args:
+            text: Text to synthesize
+            reference_audio_path: Path to reference audio
+            output_path: Path for output audio
+            language: Target language
+            progress_callback: Optional progress callback
+            
+        Returns:
+            Dictionary with synthesis results and quality metrics
+        """
+        if not PERFECT_CLONING_AVAILABLE:
+            logger.warning("Perfect cloning not available, falling back to standard synthesis")
+            return await self.synthesize_speech(
+                text, reference_audio_path, output_path, language, progress_callback
+            )
+        
+        try:
+            if progress_callback:
+                progress_callback(5, "Initializing perfect voice cloning...")
+            
+            # Get the perfect cloning service
+            perfect_service = get_perfect_cloning_service()
+            
+            # Initialize if needed
+            if not perfect_service._initialized:
+                await perfect_service.initialize(
+                    lambda p, m: progress_callback(5 + p * 0.15, m) if progress_callback else None
+                )
+            
+            if progress_callback:
+                progress_callback(20, "Creating voice profile...")
+            
+            # Create voice profile
+            profile = await perfect_service.create_voice_profile(
+                audio_path=reference_audio_path,
+                progress_callback=lambda p, m: progress_callback(20 + p * 0.3, m) if progress_callback else None
+            )
+            
+            if progress_callback:
+                progress_callback(50, "Synthesizing with perfect cloning...")
+            
+            # Synthesize with perfect cloning
+            result = await perfect_service.synthesize_perfect(
+                text=text,
+                voice_profile=profile,
+                language=language,
+                progress_callback=lambda p, m: progress_callback(50 + p * 0.45, m) if progress_callback else None
+            )
+            
+            if progress_callback:
+                progress_callback(95, "Saving output...")
+            
+            # Save output
+            os.makedirs(os.path.dirname(output_path), exist_ok=True)
+            sf.write(output_path, result.audio, result.sample_rate, format='WAV', subtype='PCM_16')
+            
+            if progress_callback:
+                progress_callback(100, f"Perfect cloning complete (similarity: {result.quality_metrics.overall_similarity:.1%})")
+            
+            return {
+                "output_path": output_path,
+                "duration": len(result.audio) / result.sample_rate,
+                "sample_rate": result.sample_rate,
+                "quality_score": result.quality_metrics.overall_quality,
+                "similarity_score": result.quality_metrics.overall_similarity,
+                "speaker_similarity": result.quality_metrics.speaker_similarity,
+                "prosody_similarity": result.quality_metrics.prosody_similarity,
+                "timbre_similarity": result.quality_metrics.timbre_similarity,
+                "naturalness_score": result.quality_metrics.naturalness_score,
+                "language": language,
+                "text_length": len(text),
+                "synthesis_method": "perfect_voice_cloning",
+                "regeneration_attempts": result.regeneration_attempts,
+                "synthesis_time": result.synthesis_time,
+                "success": result.success,
+                "profile_quality": profile.profile_quality
+            }
+            
+        except Exception as e:
+            logger.error(f"Perfect voice cloning failed: {e}, falling back to standard synthesis")
+            return await self.synthesize_speech(
+                text, reference_audio_path, output_path, language, progress_callback
+            )
 
 
 # Global service instance
