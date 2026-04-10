@@ -4,6 +4,7 @@ Celery tasks for speech synthesis operations.
 
 import os
 import time
+import asyncio
 import logging
 from pathlib import Path
 from typing import Dict, Any, Optional
@@ -11,11 +12,19 @@ from celery import current_task
 
 from app.core.celery_app import celery_app
 from app.core.config import settings
-from app.services.speech_synthesis_service import speech_synthesizer, cross_language_synthesizer
 from app.schemas.voice import VoiceModelSchema
 from app.models.voice import VoiceModelStatus
 
 logger = logging.getLogger(__name__)
+
+
+def _run_async(coro):
+    """Run an async coroutine from a sync Celery task."""
+    loop = asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(coro)
+    finally:
+        loop.close()
 
 
 @celery_app.task(bind=True)
@@ -29,19 +38,8 @@ def synthesize_speech_task(
 ):
     """
     Synthesize speech using voice model with progress tracking.
-    
-    Args:
-        text: Text to synthesize
-        voice_model_data: Voice model data dictionary
-        language: Target language (auto-detected if None)
-        voice_settings: Optional voice modification settings
-        synthesis_id: Optional synthesis task ID for tracking
-    
-    Returns:
-        dict: Task result with status, output path, and metadata
     """
     try:
-        # Update task state
         def update_progress(progress: int, status: str):
             self.update_state(
                 state='PROGRESS',
@@ -54,35 +52,29 @@ def synthesize_speech_task(
         
         update_progress(0, 'Starting speech synthesis')
         
-        # Create voice model schema from data
         voice_model = VoiceModelSchema(**voice_model_data)
         
-        # Validate voice model status
         if voice_model.status != VoiceModelStatus.READY:
             error_msg = f"Voice model not ready for synthesis: {voice_model.status}"
             self.update_state(
                 state='FAILURE',
-                meta={
-                    'error': error_msg,
-                    'status': 'Voice model not ready',
-                    'synthesis_id': synthesis_id
-                }
+                meta={'error': error_msg, 'status': 'Voice model not ready', 'synthesis_id': synthesis_id}
             )
-            return {
-                'status': 'FAILURE',
-                'error': error_msg,
-                'synthesis_id': synthesis_id
-            }
+            return {'status': 'FAILURE', 'error': error_msg, 'synthesis_id': synthesis_id}
         
         update_progress(10, 'Voice model loaded')
         
-        # Perform speech synthesis
-        success, output_path, metadata = speech_synthesizer.synthesize_speech(
-            text=text,
-            voice_model=voice_model,
-            language=language,
-            voice_settings=voice_settings or {},
-            progress_callback=update_progress
+        # Import here to avoid circular imports at module level
+        from app.services.speech_synthesis_service import speech_synthesizer
+        
+        success, output_path, metadata = _run_async(
+            speech_synthesizer.synthesize_speech(
+                text=text,
+                voice_model=voice_model,
+                language=language,
+                voice_settings=voice_settings or {},
+                progress_callback=update_progress
+            )
         )
         
         if not success:
@@ -203,12 +195,16 @@ def cross_language_synthesis_task(
         
         update_progress(5, 'Voice model validated')
         
-        # Perform cross-language synthesis
-        success, output_path, metadata = cross_language_synthesizer.synthesize_cross_language(
-            text=text,
-            source_voice_model=voice_model,
-            target_language=target_language,
-            progress_callback=update_progress
+        # Import here to avoid circular imports at module level
+        from app.services.speech_synthesis_service import cross_language_synthesizer
+        
+        success, output_path, metadata = _run_async(
+            cross_language_synthesizer.synthesize_cross_language(
+                text=text,
+                source_voice_model=voice_model,
+                target_language=target_language,
+                progress_callback=update_progress
+            )
         )
         
         if not success:
@@ -320,12 +316,17 @@ def batch_synthesis_task(
                 # Create voice model schema
                 voice_model = VoiceModelSchema(**voice_model_data)
                 
+                # Import here to avoid circular imports at module level
+                from app.services.speech_synthesis_service import speech_synthesizer
+                
                 # Perform synthesis
-                success, output_path, metadata = speech_synthesizer.synthesize_speech(
-                    text=text,
-                    voice_model=voice_model,
-                    language=language,
-                    voice_settings=voice_settings or {}
+                success, output_path, metadata = _run_async(
+                    speech_synthesizer.synthesize_speech(
+                        text=text,
+                        voice_model=voice_model,
+                        language=language,
+                        voice_settings=voice_settings or {}
+                    )
                 )
                 
                 # Store result

@@ -20,11 +20,14 @@ from app.schemas.synthesis import (
 from app.schemas.voice import VoiceModelSchema
 from app.core.config import settings
 from app.models.voice import VoiceModel, VoiceModelStatus
-from app.services.real_voice_synthesis_service import advanced_voice_cloning_service
+from app.services.voice_cloner import voice_cloner
 from app.models.file import ReferenceAudio
 from app.core.database import get_db
 from app.middleware.session_middleware import require_session
 from app.models.session import UserSession
+from app.tasks.synthesis_tasks import (
+    cross_language_synthesis_task, batch_synthesis_task, optimize_synthesis_model
+)
 from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
@@ -160,169 +163,83 @@ async def run_enhanced_synthesis_task_async(
     language: str,
     voice_settings: Optional[Dict[str, Any]] = None
 ):
-    """Run enhanced voice synthesis with real-time quality monitoring."""
+    """Run voice cloning synthesis using VoiceCloner (single XTTS v2 model)."""
     try:
-        # Update task status
         synthesis_tasks[task_id]["status"] = "processing"
         synthesis_tasks[task_id]["stage"] = "processing"
         synthesis_tasks[task_id]["progress"] = 10
-        
-        # Create output directory
-        output_dir = Path(settings.RESULTS_DIR) if hasattr(settings, 'RESULTS_DIR') else Path("results")
-        output_dir.mkdir(exist_ok=True)
-        
-        # Generate output path
-        output_filename = f"synthesis_{task_id}.wav"
-        output_path = output_dir / output_filename
-        
-        # Enhanced progress callback with quality monitoring
+
         def progress_callback(progress: int, message: str):
             if task_id in synthesis_tasks:
                 synthesis_tasks[task_id]["progress"] = progress
                 synthesis_tasks[task_id]["status"] = message
-                
-                # Add quality metrics if available
-                if progress > 50:  # During synthesis phase
+                if progress > 50:
                     synthesis_tasks[task_id]["quality_metrics"] = {
                         "current_similarity": min(0.95, progress / 100.0 * 0.95),
                         "confidence_score": min(0.90, progress / 100.0 * 0.90),
                         "processing_stage": "synthesis" if progress < 90 else "post_processing"
                     }
-                
                 logger.info(f"Task {task_id}: {progress}% - {message}")
-        
-        # Check if ensemble synthesis is available
-        from app.services.ensemble_voice_synthesis_engine import ensemble_voice_synthesizer
-        
-        if hasattr(ensemble_voice_synthesizer, 'loaded_models') and ensemble_voice_synthesizer.loaded_models:
-            # Use ensemble synthesis for maximum quality
-            logger.info(f"Using ensemble synthesis for task {task_id}")
-            
-            # Create temporary voice profile from reference audio
-            from app.schemas.voice import VoiceProfileSchema
-            from datetime import datetime
-            
-            voice_profile = VoiceProfileSchema(
-                id=f"temp_profile_{task_id}",
-                reference_audio_id=reference_audio_path,  # Use the actual path instead of task_id
-                voice_characteristics={
-                    "fundamental_frequency_range": {"min": 80, "max": 300, "mean": 150},
-                    "formant_frequencies": [500, 1500, 2500, 3500],
-                    "spectral_characteristics": {"centroid": 2000, "rolloff": 4000},
-                    "prosody_parameters": {"speech_rate": 4.0, "pause_frequency": 10.0}
-                },
-                quality_score=0.85,
-                created_at=datetime.now()
-            )
-            
-            # Temporarily copy reference audio to expected location for voice profile
-            import shutil
-            temp_audio_path = output_dir / f"temp_ref_{task_id}.wav"
-            try:
-                shutil.copy2(reference_audio_path, temp_audio_path)
-                logger.info(f"Copied reference audio to: {temp_audio_path}")
-            except Exception as copy_error:
-                logger.warning(f"Failed to copy reference audio: {copy_error}")
-                # Use original path directly
-                temp_audio_path = Path(reference_audio_path)
-            
-            try:
-                success, result_path, metadata = await ensemble_voice_synthesizer.synthesize_speech_ensemble(
-                    text=text,
-                    voice_profile=voice_profile,
-                    language=language,
-                    voice_settings=voice_settings,
-                    progress_callback=progress_callback
-                )
-                
-                if success and result_path:
-                    # Copy result to expected output path
-                    shutil.copy2(result_path, output_path)
-                    
-                    # Enhanced result with quality metrics
-                    result = {
-                        "output_path": str(output_path),
-                        "processing_time": metadata.get("processing_time", 0),
-                        "quality_metrics": metadata.get("quality_metrics", {}),
-                        "similarity_score": metadata.get("quality_metrics", {}).get("overall_similarity", 0.85),
-                        "confidence_score": metadata.get("quality_metrics", {}).get("confidence_score", 0.80),
-                        "synthesis_method": "ensemble_voice_cloning",
-                        "recommendations": metadata.get("recommendations", [])
-                    }
-                else:
-                    error_msg = "Ensemble synthesis failed - no result returned"
-                    logger.error(f"Task {task_id}: {error_msg}")
-                    raise Exception(error_msg)
-                    
-            finally:
-                # Clean up temporary files
-                if temp_audio_path.exists():
-                    temp_audio_path.unlink()
-        else:
-            # Fallback to advanced voice cloning service
-            logger.info(f"Using advanced voice cloning for task {task_id}")
-            
-            result = await advanced_voice_cloning_service.synthesize_speech(
-                text=text,
-                reference_audio_path=reference_audio_path,
-                output_path=str(output_path),
-                language=language,
-                progress_callback=progress_callback
-            )
-        
-        # Update task as completed with enhanced metadata
+
+        output_path, metrics = await voice_cloner.clone_voice(
+            text=text,
+            reference_audio_path=reference_audio_path,
+            language=language,
+            progress_callback=progress_callback,
+        )
+
+        result = {
+            "output_path": str(output_path),
+            "processing_time": metrics.get("processing_time", 0),
+            "quality_metrics": metrics,
+            "similarity_score": metrics.get("similarity_score", 0.0),
+            "confidence_score": metrics.get("similarity_score", 0.0),
+            "synthesis_method": "xtts_v2_voice_cloner",
+            "recommendations": []
+        }
+
         synthesis_tasks[task_id]["status"] = "completed"
         synthesis_tasks[task_id]["stage"] = "completed"
         synthesis_tasks[task_id]["progress"] = 100
         synthesis_tasks[task_id]["result"] = result
         synthesis_tasks[task_id]["completed_at"] = datetime.now()
-        
-        # Add final quality assessment
         synthesis_tasks[task_id]["final_quality_metrics"] = {
-            "overall_similarity": result.get("similarity_score", 0.85),
-            "quality_score": result.get("quality_score", 0.85),
-            "confidence_score": result.get("confidence_score", 0.80),
-            "processing_time": result.get("processing_time", 0),
-            "synthesis_method": result.get("synthesis_method", "advanced_voice_cloning"),
-            "recommendations": result.get("recommendations", [])
+            "overall_similarity": metrics.get("similarity_score", 0.0),
+            "quality_score": metrics.get("similarity_score", 0.0),
+            "confidence_score": metrics.get("similarity_score", 0.0),
+            "quality_level": metrics.get("quality_level", "unknown"),
+            "ecapa_similarity": metrics.get("ecapa_similarity"),
+            "resemblyzer_similarity": metrics.get("resemblyzer_similarity"),
+            "processing_time": metrics.get("processing_time", 0),
+            "synthesis_method": "xtts_v2_voice_cloner",
+            "recommendations": []
         }
-        
-        logger.info(f"Enhanced voice cloning completed for task {task_id}")
-        
+
+        logger.info(f"Voice cloning completed for task {task_id} — similarity={metrics.get('similarity_score')}")
+
     except Exception as e:
-        logger.error(f"Enhanced voice cloning failed for task {task_id}: {str(e)}")
-        
-        # Use enhanced error handling
+        logger.error(f"Voice cloning failed for task {task_id}: {str(e)}")
+
         from app.core.error_handling import error_recovery_manager, ErrorCategory
         error_info = error_recovery_manager.handle_error(
             e, ErrorCategory.SYNTHESIS,
-            {
-                "task_id": task_id,
-                "text_length": len(text),
-                "language": language,
-                "reference_audio_path": reference_audio_path
-            }
+            {"task_id": task_id, "text_length": len(text), "language": language}
         )
-        
+
         if task_id in synthesis_tasks:
-            synthesis_tasks[task_id]["status"] = f"Enhanced voice cloning failed: {str(e)}"
+            synthesis_tasks[task_id]["status"] = f"Voice cloning failed: {str(e)}"
             synthesis_tasks[task_id]["stage"] = "failed"
             synthesis_tasks[task_id]["error"] = str(e)
             synthesis_tasks[task_id]["error_details"] = {
                 "error_id": error_info.error_id,
                 "error_type": type(e).__name__,
                 "error_message": str(e),
-                "error_category": error_info.category,
                 "is_retryable": error_info.is_retryable,
                 "recovery_suggestions": [
                     "Check reference audio quality and format",
-                    "Verify text input is properly formatted",
-                    "Try with shorter text segments (under 500 characters)",
-                    "Ensure reference audio is at least 10 seconds long",
+                    "Ensure reference audio is at least 3 seconds long",
+                    "Try with shorter text segments",
                     "Check system resources and try again later"
-                ] if error_info.is_retryable else [
-                    "Contact support with error ID: " + error_info.error_id,
-                    "This error requires manual intervention"
                 ]
             }
 
@@ -353,26 +270,13 @@ async def create_synthesis_task(
                 detail=f"Voice model not found: {request.voice_model_id}"
             )
         
-        # Get reference audio file path
+        # Check reference audio file path
         reference_audio_path = get_reference_audio_path(voice_model.reference_audio_id, db)
         if not reference_audio_path:
             raise HTTPException(
                 status_code=404,
                 detail=f"Reference audio file not found for voice model: {request.voice_model_id}"
             )
-        
-        # Check if enhanced voice cloning pipeline is ready
-        from app.services.ensemble_voice_synthesis_engine import ensemble_voice_synthesizer
-        
-        # Try to initialize ensemble models if not already loaded
-        if not hasattr(ensemble_voice_synthesizer, 'loaded_models') or not ensemble_voice_synthesizer.loaded_models:
-            logger.info("Enhanced voice cloning pipeline not ready, initializing...")
-            try:
-                success = await ensemble_voice_synthesizer.initialize_models()
-                if not success:
-                    logger.warning("Ensemble models failed to initialize, will use advanced voice cloning")
-            except Exception as e:
-                logger.warning(f"Failed to initialize ensemble models: {e}")
         
         # Generate unique synthesis ID
         synthesis_id = f"synthesis_{uuid.uuid4().hex[:12]}"

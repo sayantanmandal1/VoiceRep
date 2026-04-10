@@ -89,6 +89,27 @@ class Settings(BaseSettings):
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     
+    # XTTS v2 Voice Cloning
+    XTTS_MODEL_NAME: str = "tts_models/multilingual/multi-dataset/xtts_v2"
+    XTTS_DEVICE: str = "auto"  # "auto", "cuda", "cpu"
+    
+    # Reference Audio Processing (Demucs + VAD)
+    DEMUCS_MODEL: str = "htdemucs_ft"
+    REFERENCE_TARGET_LUFS: float = -20.0
+    REFERENCE_MAX_DURATION: float = 30.0  # seconds
+    REFERENCE_MIN_DURATION: float = 3.0   # seconds
+    REFERENCE_SAMPLE_RATE: int = 22050
+    REFERENCE_CACHE_DIR: str = "models/ref_cache"
+    
+    # Synthesis Post-Processing
+    SYNTHESIS_SAMPLE_RATE: int = 22050
+    SYNTHESIS_NOISE_REDUCE_STRENGTH: float = 0.3
+    
+    # Quality Assessment
+    MIN_SIMILARITY_THRESHOLD: float = 0.75
+    ECAPA_WEIGHT: float = 0.6
+    RESEMBLYZER_WEIGHT: float = 0.4
+    
     class Config:
         env_file = ".env"
         case_sensitive = True

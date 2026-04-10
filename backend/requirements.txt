@@ -19,26 +19,36 @@ soundfile==0.12.1
 scipy==1.11.4
 numpy==1.24.3
 
+# Loudness normalization
+pyloudnorm==0.1.1
+
+# Noise reduction
+noisereduce>=3.0.0
+
 # Machine Learning
 scikit-learn==1.3.2
 
-# PyTorch (CPU version for Docker)
---extra-index-url https://download.pytorch.org/whl/cpu
-torch==2.1.0+cpu
-torchaudio==2.1.0+cpu
+# NOTE: torch and torchaudio are installed in the Dockerfile with CUDA support
+# DO NOT add torch or torchaudio here — they are pre-installed
 
-# Transformers
-transformers>=4.21.0,<4.36.0
+# Transformers (pinned for TTS 0.22.0 compatibility)
+transformers==4.35.2
 
-# Text-to-Speech (Coqui TTS)
-TTS>=0.22.0
+# Text-to-Speech: Coqui XTTS v2
+TTS==0.22.0
 
-# Audio processing utilities
-ffmpeg-python==0.2.0
-noisereduce>=3.0.0
+# Source Separation: Facebook Demucs v4 for vocal isolation
+demucs==4.0.1
+
+# Speaker Verification
+speechbrain==1.0.0
+resemblyzer==0.1.3
 
 # Language detection
 langdetect==1.0.9
+
+# Audio processing utilities
+ffmpeg-python==0.2.0
 
 # HTTP client
 httpx==0.25.2

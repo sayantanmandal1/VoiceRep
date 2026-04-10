@@ -28,11 +28,8 @@ from app.api.v1.api import api_router
 # from app.middleware.performance_middleware import setup_performance_middleware
 from app.middleware.session_middleware import setup_session_middleware
 # from app.services.cleanup_service import schedule_cleanup_task
-from app.services.real_voice_synthesis_service import initialize_voice_synthesis_service
-from app.services.ensemble_voice_synthesis_engine import initialize_ensemble_synthesis_service
 from app.services.performance_optimization_service import initialize_performance_optimization
 from app.services.optimized_voice_analysis_service import initialize_optimized_voice_analysis
-from app.services.optimized_synthesis_service import initialize_optimized_synthesis
 
 # Import models to ensure they are registered with Base
 from app.models import (
@@ -76,25 +73,8 @@ async def lifespan(app: FastAPI):
         # schedule_cleanup_task()
         # logger.info("Cleanup task scheduler started")
         
-        # Initialize real voice synthesis service with fallback and retry logic
-        logger.info("Initializing real voice synthesis service...")
-        try:
-            voice_service_ready = await initialize_with_fallback(
-                initialize_voice_synthesis_service,
-                max_retries=2,
-                delay=3
-            )
-            if voice_service_ready:
-                logger.info("Real voice synthesis service initialized successfully")
-            else:
-                logger.warning("Voice synthesis service initialization failed - synthesis may not work properly")
-        except Exception as e:
-            logger.error(f"Voice synthesis service failed to initialize after retries: {e}")
-            logger.info("Application will continue with limited functionality")
-        
-        # Skip ensemble voice synthesis service for faster startup
-        # It will be initialized lazily on first use
-        logger.info("Skipping ensemble voice synthesis service initialization (will initialize on first use)")
+        # VoiceCloner loads lazily on first synthesis call (XTTS v2 + Demucs)
+        logger.info("VoiceCloner will initialize lazily on first synthesis request")
         
         # Initialize performance optimization service
         logger.info("Initializing performance optimization service...")
@@ -126,9 +106,6 @@ async def lifespan(app: FastAPI):
                 logger.warning("Optimized voice analysis service initialization failed")
         except Exception as e:
             logger.error(f"Optimized voice analysis service failed to initialize: {e}")
-        
-        # Initialize optimized synthesis service (skip model warm-up for faster startup)
-        logger.info("Skipping optimized synthesis service warm-up (will initialize on first use)")
         
         logger.info("Application startup completed successfully")
         

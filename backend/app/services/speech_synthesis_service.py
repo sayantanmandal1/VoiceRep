@@ -1,5 +1,7 @@
 """
 Speech synthesis service for generating high-quality voice clones.
+
+Uses VoiceCloner (single XTTS v2 model) for state-of-the-art voice cloning.
 """
 
 import os
@@ -8,37 +10,25 @@ import logging
 import numpy as np
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Tuple
-from scipy.io import wavfile
 
-# Required imports - no fallbacks
-import torch
-import torchaudio
 import librosa
 import soundfile as sf
 from langdetect import detect
-from scipy.signal import resample
-from TTS.api import TTS
 
 from app.schemas.voice import VoiceModelSchema, VoiceProfileSchema
 from app.core.config import settings
-# Import real voice synthesis service
-from app.services.real_voice_synthesis_service import advanced_voice_cloning_service as real_voice_synthesis_service
-# Import ensemble voice synthesis engine
-from app.services.ensemble_voice_synthesis_engine import ensemble_voice_synthesizer
+from app.services.voice_cloner import voice_cloner
 
 logger = logging.getLogger(__name__)
 
 
 class SpeechSynthesizer:
-    """Main speech synthesis engine using TorToiSe TTS and RVC models."""
+    """Main speech synthesis engine using XTTS v2 via VoiceCloner."""
     
     def __init__(self):
-        self.sample_rate = 22050  # Standard sample rate for synthesis
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.models_cache = {}  # Cache for loaded models
+        self.sample_rate = 22050
         self._ensure_directories()
-        
-        logger.info(f"Speech synthesizer initialized with device: {self.device}")
+        logger.info("Speech synthesizer initialized (delegates to VoiceCloner)")
         
     def _ensure_directories(self) -> None:
         """Ensure required directories exist."""
@@ -56,106 +46,67 @@ class SpeechSynthesizer:
         """
         Generate speech using cloned voice model.
         
-        Args:
-            text: Text to synthesize
-            voice_model: Voice model to use for synthesis
-            language: Target language (auto-detected if None)
-            voice_settings: Optional voice modification settings
-            progress_callback: Optional callback for progress updates
-            
+        Delegates to VoiceCloner for single-model XTTS v2 synthesis.
+        
         Returns:
             Tuple of (success, output_path, metadata)
         """
         try:
             start_time = time.time()
-            operation_id = f"speech_synthesis_{int(time.time() * 1000)}"
             
             if progress_callback:
                 progress_callback(5, "Preparing synthesis")
             
-            # Use enhanced voice cloning pipeline - no fallbacks
-            logger.info("Using enhanced voice cloning pipeline with ensemble synthesis")
-            return await self._synthesize_with_enhanced_pipeline(
-                text, voice_model, language, voice_settings, 
-                progress_callback, operation_id, start_time
+            # Get reference audio path from voice model
+            reference_audio_path = voice_model.model_path
+            if not reference_audio_path or not os.path.exists(reference_audio_path):
+                return False, None, {"error": "Reference audio not found"}
+            
+            # Auto-detect language if not specified
+            if not language:
+                try:
+                    detected = detect(text)
+                    language = detected
+                except Exception:
+                    language = "en"
+            
+            # Delegate to VoiceCloner
+            output_path, metrics = await voice_cloner.clone_voice(
+                text=text,
+                reference_audio_path=reference_audio_path,
+                language=language,
+                output_dir=settings.RESULTS_DIR,
+                progress_callback=progress_callback,
             )
-            
-            # Validate text input
-            if not self._validate_text_input(text):
-                return False, None, {"error": "Invalid text input"}
-            
-            if progress_callback:
-                progress_callback(15, "Loading voice model")
-            
-            # Load voice model
-            model_data = self._load_voice_model(voice_model)
-            if not model_data:
-                return False, None, {"error": "Failed to load voice model"}
-            
-            if progress_callback:
-                progress_callback(30, "Preprocessing text")
-            
-            # Preprocess text for synthesis
-            processed_text = self._preprocess_text(text, language)
-            
-            if progress_callback:
-                progress_callback(40, "Generating speech")
-            
-            # Generate base speech using TorToiSe TTS
-            base_audio = self._generate_base_speech(
-                processed_text, 
-                model_data, 
-                language,
-                progress_callback
-            )
-            
-            if base_audio is None:
-                return False, None, {"error": "Base speech generation failed"}
-            
-            if progress_callback:
-                progress_callback(70, "Applying voice conversion")
-            
-            # Apply voice conversion using RVC
-            converted_audio = self._apply_voice_conversion(
-                base_audio, 
-                voice_model, 
-                voice_settings or {}
-            )
-            
-            if converted_audio is None:
-                return False, None, {"error": "Voice conversion failed"}
-            
-            if progress_callback:
-                progress_callback(85, "Post-processing audio")
-            
-            # Apply post-processing
-            final_audio = self._post_process_audio(
-                converted_audio, 
-                voice_model, 
-                voice_settings or {}
-            )
-            
-            if progress_callback:
-                progress_callback(95, "Saving output")
-            
-            # Save output audio
-            output_path = self._save_synthesized_audio(final_audio, voice_model.id)
-            if not output_path:
-                return False, None, {"error": "Failed to save output audio"}
             
             processing_time = time.time() - start_time
             
-            # Generate metadata
+            # Build metadata matching the expected API contract
             metadata = {
                 "text": text,
                 "language": language,
                 "voice_model_id": voice_model.id,
                 "processing_time": processing_time,
                 "sample_rate": self.sample_rate,
-                "duration": len(final_audio) / self.sample_rate,
+                "duration": metrics.get("processing_time", 0),
                 "voice_settings": voice_settings or {},
-                "quality_metrics": self._assess_synthesis_quality(final_audio)
+                "synthesis_method": "xtts_v2_voice_cloner",
+                "quality_metrics": {
+                    "overall_similarity": metrics.get("similarity_score", 0.0),
+                    "ecapa_similarity": metrics.get("ecapa_similarity"),
+                    "resemblyzer_similarity": metrics.get("resemblyzer_similarity"),
+                    "quality_level": metrics.get("quality_level", "unknown"),
+                    "confidence_score": metrics.get("similarity_score", 0.0),
+                },
+                "recommendations": [],
             }
+            
+            # Compute actual duration from output file
+            try:
+                audio, sr = librosa.load(output_path, sr=self.sample_rate, mono=True)
+                metadata["duration"] = round(len(audio) / sr, 2)
+            except Exception:
+                pass
             
             if progress_callback:
                 progress_callback(100, "Synthesis complete")
@@ -165,251 +116,6 @@ class SpeechSynthesizer:
         except Exception as e:
             logger.error(f"Speech synthesis failed: {str(e)}")
             return False, None, {"error": str(e)}
-    
-    async def _synthesize_with_enhanced_pipeline(
-        self,
-        text: str,
-        voice_model: VoiceModelSchema,
-        language: Optional[str],
-        voice_settings: Optional[Dict[str, Any]],
-        progress_callback: Optional[callable],
-        operation_id: str,
-        start_time: float
-    ) -> Tuple[bool, Optional[str], Dict[str, Any]]:
-        """Use enhanced voice cloning pipeline with ensemble synthesis."""
-        try:
-            if progress_callback:
-                progress_callback(5, "Initializing enhanced voice cloning pipeline")
-            
-            # Import real-time quality monitor
-            from app.services.real_time_quality_monitor import real_time_quality_monitor
-            
-            # Start quality monitoring session
-            session_id = f"synthesis_{operation_id}"
-            real_time_quality_monitor.start_monitoring_session(
-                session_id, 
-                quality_targets={
-                    'minimum_similarity': 0.95,
-                    'minimum_quality': 0.90,
-                    'minimum_confidence': 0.85
-                }
-            )
-            
-            # Check if ensemble service is available and initialized
-            if hasattr(ensemble_voice_synthesizer, 'loaded_models') and ensemble_voice_synthesizer.loaded_models:
-                # Use ensemble synthesis for highest quality
-                logger.info("Using ensemble voice synthesis for maximum quality")
-                
-                if progress_callback:
-                    progress_callback(10, "Preparing ensemble synthesis")
-                
-                # Update monitoring stage
-                from app.services.real_time_quality_monitor import ProcessingStage
-                real_time_quality_monitor.update_processing_stage(
-                    session_id, ProcessingStage.SYNTHESIS, 0.1
-                )
-                
-                # Convert voice model to voice profile for ensemble synthesis
-                voice_profile = self._convert_voice_model_to_profile(voice_model)
-                
-                # Enhanced progress callback with quality monitoring
-                def enhanced_progress_callback(progress: int, message: str):
-                    if progress_callback:
-                        progress_callback(progress, message)
-                    
-                    # Update quality monitoring
-                    stage_progress = progress / 100.0
-                    real_time_quality_monitor.update_processing_stage(
-                        session_id, ProcessingStage.SYNTHESIS, stage_progress
-                    )
-                
-                success, output_path, metadata = await ensemble_voice_synthesizer.synthesize_speech_ensemble(
-                    text=text,
-                    voice_profile=voice_profile,
-                    language=language or "en",
-                    progress_callback=enhanced_progress_callback
-                )
-                
-                if success and output_path:
-                    processing_time = time.time() - start_time
-                    
-                    # Perform final quality assessment
-                    if progress_callback:
-                        progress_callback(95, "Performing quality assessment")
-                    
-                    # Load synthesized audio for quality assessment
-                    import librosa
-                    synthesized_audio, _ = librosa.load(output_path, sr=22050)
-                    
-                    # Get reference audio for comparison
-                    reference_audio_path = voice_model.model_path
-                    if reference_audio_path and os.path.exists(reference_audio_path):
-                        reference_audio, _ = librosa.load(reference_audio_path, sr=22050)
-                        
-                        # Assess final quality with monitoring
-                        final_metrics = real_time_quality_monitor.assess_real_time_quality(
-                            session_id, synthesized_audio, 22050, 
-                            ProcessingStage.POST_PROCESSING, reference_audio
-                        )
-                        
-                        # Get detailed similarity metrics
-                        similarity_metrics = real_time_quality_monitor.calculate_detailed_similarity(
-                            synthesized_audio, reference_audio, 22050
-                        )
-                        
-                        # Update metadata with enhanced quality information
-                        metadata.update({
-                            "text": text,
-                            "language": language or "en",
-                            "voice_model_id": voice_model.id,
-                            "processing_time": processing_time,
-                            "synthesis_method": "enhanced_ensemble_pipeline",
-                            "ensemble_synthesis": True,
-                            "quality_metrics": {
-                                "overall_similarity": similarity_metrics.overall_similarity,
-                                "pitch_similarity": similarity_metrics.pitch_similarity,
-                                "timbre_similarity": similarity_metrics.timbre_similarity,
-                                "prosody_similarity": similarity_metrics.prosody_similarity,
-                                "spectral_similarity": similarity_metrics.spectral_similarity,
-                                "confidence_score": final_metrics.confidence_score,
-                                "quality_level": real_time_quality_monitor.get_quality_level(final_metrics.quality_score).value
-                            },
-                            "recommendations": final_metrics.recommendations if final_metrics.similarity_score < 0.95 else []
-                        })
-                    else:
-                        # Basic metadata without reference comparison
-                        metadata.update({
-                            "text": text,
-                            "language": language or "en",
-                            "voice_model_id": voice_model.id,
-                            "processing_time": processing_time,
-                            "synthesis_method": "enhanced_ensemble_pipeline",
-                            "ensemble_synthesis": True,
-                            "quality_metrics": metadata.get("quality_metrics", {}),
-                            "recommendations": []
-                        })
-                    
-                    # Complete quality monitoring session
-                    real_time_quality_monitor.complete_session(session_id)
-                    
-                    if progress_callback:
-                        progress_callback(100, "Enhanced synthesis complete")
-                    
-                    return success, output_path, metadata
-                else:
-                    logger.warning("Ensemble synthesis failed, falling back to advanced voice cloning")
-            
-            # Fallback to advanced voice cloning service
-            if progress_callback:
-                progress_callback(15, "Using advanced voice cloning service")
-            
-            # Get reference audio path from voice model
-            reference_audio_path = voice_model.model_path
-            if not reference_audio_path or not os.path.exists(reference_audio_path):
-                return False, None, {"error": "Reference audio not found"}
-            
-            # Generate output path
-            timestamp = int(time.time())
-            output_filename = f"synthesis_{voice_model.id}_{timestamp}.wav"
-            output_path = os.path.join(settings.RESULTS_DIR, output_filename)
-            
-            # Use advanced voice cloning service with quality monitoring
-            from app.services.real_voice_synthesis_service import advanced_voice_cloning_service
-            
-            def monitored_progress_callback(progress: int, message: str):
-                if progress_callback:
-                    progress_callback(progress, message)
-                
-                # Update quality monitoring
-                stage_progress = progress / 100.0
-                real_time_quality_monitor.update_processing_stage(
-                    session_id, ProcessingStage.SYNTHESIS, stage_progress
-                )
-            
-            result = await advanced_voice_cloning_service.synthesize_speech(
-                text=text,
-                reference_audio_path=reference_audio_path,
-                output_path=output_path,
-                language=language or "en",
-                progress_callback=monitored_progress_callback
-            )
-            
-            processing_time = time.time() - start_time
-            
-            # Generate enhanced metadata with quality assessment
-            metadata = {
-                "text": text,
-                "language": language or "en",
-                "voice_model_id": voice_model.id,
-                "processing_time": processing_time,
-                "sample_rate": result.get("sample_rate", 22050),
-                "duration": result.get("duration", 0),
-                "voice_settings": voice_settings or {},
-                "synthesis_method": "advanced_voice_cloning",
-                "quality_metrics": {
-                    "quality_score": result.get("quality_score", 0.8),
-                    "similarity_score": result.get("similarity_score", 0.8),
-                    "confidence_score": result.get("confidence_score", 0.75)
-                },
-                "recommendations": result.get("recommendations", [])
-            }
-            
-            # Complete quality monitoring session
-            real_time_quality_monitor.complete_session(session_id)
-            
-            if progress_callback:
-                progress_callback(100, "Advanced synthesis complete")
-            
-            return True, output_path, metadata
-            
-        except Exception as e:
-            logger.error(f"Enhanced synthesis failed: {str(e)}")
-            
-            # Use enhanced error handling
-            from app.core.error_handling import error_recovery_manager, ErrorCategory
-            error_info = error_recovery_manager.handle_error(
-                e, ErrorCategory.SYNTHESIS, 
-                {
-                    "operation_id": operation_id,
-                    "voice_model_id": voice_model.id,
-                    "text_length": len(text),
-                    "language": language
-                }
-            )
-            
-            # Complete quality monitoring session with error
-            try:
-                real_time_quality_monitor.complete_session(session_id, error=str(e))
-            except:
-                pass
-            
-            # Return enhanced error information
-            return False, None, {
-                "error": str(e),
-                "error_id": error_info.error_id,
-                "error_category": error_info.category,
-                "is_retryable": error_info.is_retryable,
-                "recovery_suggestions": [
-                    "Check reference audio quality and duration",
-                    "Verify text input format and language",
-                    "Try with shorter text segments",
-                    "Ensure sufficient system resources"
-                ] if error_info.is_retryable else [
-                    "Contact support with error ID: " + error_info.error_id
-                ]
-            }
-    
-    def _convert_voice_model_to_profile(self, voice_model: VoiceModelSchema) -> 'VoiceProfileSchema':
-        """Convert VoiceModelSchema to VoiceProfileSchema for ensemble synthesis."""
-        from app.schemas.voice import VoiceProfileSchema
-        
-        return VoiceProfileSchema(
-            id=voice_model.id,
-            reference_audio_id=getattr(voice_model, 'reference_audio_id', 'default'),
-            voice_characteristics=voice_model.voice_characteristics or {},
-            quality_score=voice_model.quality_score or 0.8,
-            created_at=voice_model.created_at
-        )
     
     def _detect_language(self, text: str) -> str:
         """Detect language of input text."""
@@ -843,7 +549,7 @@ class CrossLanguageSynthesizer:
             # Add more language pairs as needed
         }
     
-    def synthesize_cross_language(
+    async def synthesize_cross_language(
         self, 
         text: str, 
         source_voice_model: VoiceModelSchema,
@@ -852,15 +558,6 @@ class CrossLanguageSynthesizer:
     ) -> Tuple[bool, Optional[str], Dict[str, Any]]:
         """
         Synthesize speech in target language while preserving source voice characteristics.
-        
-        Args:
-            text: Text to synthesize
-            source_voice_model: Voice model from source language
-            target_language: Target language for synthesis
-            progress_callback: Optional progress callback
-            
-        Returns:
-            Tuple of (success, output_path, metadata)
         """
         try:
             if progress_callback:
@@ -873,7 +570,7 @@ class CrossLanguageSynthesizer:
                 progress_callback(30, "Generating cross-language speech")
             
             # Generate speech with adapted model
-            success, output_path, metadata = self.base_synthesizer.synthesize_speech(
+            success, output_path, metadata = await self.base_synthesizer.synthesize_speech(
                 text, 
                 adapted_model, 
                 target_language,
@@ -937,7 +634,3 @@ class CrossLanguageSynthesizer:
 # Global service instances
 speech_synthesizer = SpeechSynthesizer()
 cross_language_synthesizer = CrossLanguageSynthesizer(speech_synthesizer)
-
-# Initialize real-time quality monitor
-from app.services.real_time_quality_monitor import RealTimeQualityMonitor
-real_time_quality_monitor = RealTimeQualityMonitor()
