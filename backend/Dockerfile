@@ -39,6 +39,11 @@ RUN pip install --upgrade pip setuptools wheel
 # This ensures TTS and other packages find torch already installed
 RUN pip install torch==2.1.1 torchaudio==2.1.1 --index-url https://download.pytorch.org/whl/cu118
 
+# Remove distutils-installed packages that block pip upgrades
+RUN rm -rf /usr/lib/python3/dist-packages/blinker* \
+           /usr/lib/python3/dist-packages/PyParsing* \
+           /usr/lib/python3/dist-packages/pyparsing*
+
 # Copy requirements and install
 COPY requirements.txt ./
 RUN pip install -r requirements.txt
