@@ -8,12 +8,16 @@ ENV PIP_NO_CACHE_DIR=1
 
 WORKDIR /app
 
-# Install system dependencies
+# Install system dependencies + Python 3.11 from deadsnakes PPA
+# Python 3.11 avoids TTS==0.22.0's numpy==1.22.0 pin (only applies to <=3.10)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3.10 \
-    python3.10-dev \
-    python3.10-venv \
-    python3-pip \
+    software-properties-common \
+    && add-apt-repository -y ppa:deadsnakes/ppa \
+    && apt-get update && apt-get install -y --no-install-recommends \
+    python3.11 \
+    python3.11-dev \
+    python3.11-venv \
+    python3.11-distutils \
     ffmpeg \
     libsndfile1 \
     libsndfile1-dev \
@@ -23,10 +27,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     && rm -rf /var/lib/apt/lists/*
 
-# Set Python 3.10 as default
-RUN update-alternatives --install /usr/bin/python python /usr/bin/python3.10 1 && \
-    update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.10 1 && \
-    update-alternatives --install /usr/bin/pip pip /usr/bin/pip3 1
+# Set Python 3.11 as default and install pip
+RUN update-alternatives --install /usr/bin/python python /usr/bin/python3.11 1 && \
+    update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1 && \
+    curl -sS https://bootstrap.pypa.io/get-pip.py | python3.11
 
 # Upgrade pip
 RUN pip install --upgrade pip setuptools wheel
