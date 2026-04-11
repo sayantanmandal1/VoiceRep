@@ -146,14 +146,46 @@ def run_enhanced_synthesis_task_sync(
     except Exception as e:
         logger.error(f"Synthesis task {task_id} failed: {str(e)}")
         if task_id in synthesis_tasks:
-            synthesis_tasks[task_id]["status"] = "failed"
+            synthesis_tasks[task_id]["status"] = str(e)
+            synthesis_tasks[task_id]["stage"] = "failed"
             synthesis_tasks[task_id]["error"] = str(e)
+            synthesis_tasks[task_id]["error_details"] = {
+                "error_type": type(e).__name__,
+                "error_message": str(e),
+                "is_retryable": not isinstance(e, ValueError),
+                "recovery_suggestions": _recovery_suggestions_for(e),
+            }
     finally:
         # Clean up the event loop
         try:
             loop.close()
         except Exception:
             pass
+
+
+def _recovery_suggestions_for(error: Exception) -> list:
+    """Generate user-friendly recovery suggestions based on error type."""
+    msg = str(error).lower()
+    suggestions = []
+    if "silent" in msg or "empty" in msg or "speech" in msg:
+        suggestions.extend([
+            "Upload a clip with clear spoken/sung vocals (not just instrumentals)",
+            "Ensure the audio is at least 6 seconds of clear voice",
+            "Try a different section of the video with louder vocals",
+        ])
+    elif "short" in msg or "minimum" in msg or "duration" in msg:
+        suggestions.extend([
+            "Upload a longer clip — at least 6 seconds of clear speech or singing",
+            "Music videos with long instrumental sections may not have enough vocal content",
+        ])
+    else:
+        suggestions.extend([
+            "Check reference audio quality and format",
+            "Ensure reference audio is at least 6 seconds long",
+            "Try with shorter text segments",
+            "Check system resources and try again later",
+        ])
+    return suggestions
 
 
 async def run_enhanced_synthesis_task_async(

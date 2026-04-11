@@ -393,9 +393,9 @@ class VoiceReplicationAPI {
 
   async getSynthesisStatus(taskId: string): Promise<SynthesisProgress> {
     try {
-      // Use longer timeout for synthesis status requests since synthesis can take time
+      // Status is a lightweight dict lookup — keep timeout short to avoid false hangs
       const response = await this.client.get<SynthesisProgress>(`/synthesis/status/${taskId}`, {
-        timeout: 120000 // 2 minutes timeout for status checks
+        timeout: 30000 // 30 seconds — status check is a simple lookup
       });
       console.log(`Status for task ${taskId}:`, response.data);
       return response.data;
@@ -406,9 +406,9 @@ class VoiceReplicationAPI {
   }
 
   async getSynthesisResult(taskId: string): Promise<SynthesisResult> {
-    // Use longer timeout for synthesis result requests
+    // Result fetch is lightweight — keep timeout reasonable
     const response = await this.client.get<SynthesisResult>(`/synthesis/result/${taskId}`, {
-      timeout: 120000 // 2 minutes timeout
+      timeout: 60000 // 60 seconds
     });
     return response.data;
   }

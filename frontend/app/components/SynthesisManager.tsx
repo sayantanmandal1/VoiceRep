@@ -323,6 +323,8 @@ export default function SynthesisManager({
   const pollProgress = useCallback(async (taskId: string) => {
     const maxAttempts = 300; // 5 minutes with 1-second intervals
     let attempts = 0;
+    let consecutiveErrors = 0;
+    const maxConsecutiveErrors = 10; // Give up after 10 consecutive failures
 
     // Start text processing step
     startStep('text_processing');
@@ -331,6 +333,7 @@ export default function SynthesisManager({
     const poll = async () => {
       try {
         attempts++;
+        consecutiveErrors = 0; // Reset on successful request start
 
         // Get progress using API client
         const progressData = await apiClient.getSynthesisStatus(taskId);
@@ -487,28 +490,21 @@ export default function SynthesisManager({
         }
 
       } catch (error: any) {
-        console.error('Error polling progress:', error);
+        consecutiveErrors++;
+        console.error(`Error polling progress (attempt ${attempts}, consecutive errors: ${consecutiveErrors}):`, error);
         
-        // Log detailed error information for debugging
-        console.log('Error details:', {
-          message: error.message,
-          name: error.name,
-          stack: error.stack,
-          response: error.response,
-          request: error.request
-        });
-        
-        // Handle timeout errors specifically
+        // Handle timeout errors specifically — synthesis is likely still running
         if (error.message?.includes('timeout') || error.code === 'ECONNABORTED') {
           console.warn('Request timeout, but synthesis may still be processing. Continuing to poll...');
-          if (attempts < maxAttempts) {
-            setTimeout(poll, 2000); // Wait a bit longer before retrying
+          if (attempts < maxAttempts && consecutiveErrors < maxConsecutiveErrors) {
+            setTimeout(poll, 3000); // Wait longer before retrying on timeout
             return;
           }
         }
         
         // If it's a 202 (still processing), continue polling
         if (error.message?.includes('202') && attempts < maxAttempts) {
+          consecutiveErrors = 0; // 202 is expected, not a real error
           setTimeout(poll, 1000);
           return;
         }
@@ -516,11 +512,18 @@ export default function SynthesisManager({
         // Check if this might be a successful response that's being mishandled
         if (error.response && error.response.status >= 200 && error.response.status < 300) {
           console.warn('Received successful response but treated as error:', error.response);
-          // Try to continue polling as this might be a parsing issue
+          consecutiveErrors = 0;
           if (attempts < maxAttempts) {
             setTimeout(poll, 1000);
             return;
           }
+        }
+
+        // Continue polling on transient network errors (not fatal yet)
+        if (consecutiveErrors < maxConsecutiveErrors && attempts < maxAttempts) {
+          console.warn(`Transient error, retrying in ${Math.min(consecutiveErrors, 5)}s...`);
+          setTimeout(poll, Math.min(consecutiveErrors, 5) * 1000);
+          return;
         }
 
         const errorMessage = error.message || 'Failed to get synthesis status';
