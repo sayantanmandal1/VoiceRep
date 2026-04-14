@@ -321,10 +321,10 @@ export default function SynthesisManager({
 
   // Poll for synthesis progress using API client
   const pollProgress = useCallback(async (taskId: string) => {
-    const maxAttempts = 300; // 5 minutes with 1-second intervals
+    const maxAttempts = 3600; // 60 minutes — user said they can wait
     let attempts = 0;
     let consecutiveErrors = 0;
-    const maxConsecutiveErrors = 10; // Give up after 10 consecutive failures
+    const maxConsecutiveErrors = 30; // Generous: allow many transient failures during heavy GPU work
 
     // Start text processing step
     startStep('text_processing');
@@ -497,7 +497,7 @@ export default function SynthesisManager({
         if (error.message?.includes('timeout') || error.code === 'ECONNABORTED') {
           console.warn('Request timeout, but synthesis may still be processing. Continuing to poll...');
           if (attempts < maxAttempts && consecutiveErrors < maxConsecutiveErrors) {
-            setTimeout(poll, 3000); // Wait longer before retrying on timeout
+            setTimeout(poll, 5000); // Wait 5s before retrying on timeout to reduce noise
             return;
           }
         }

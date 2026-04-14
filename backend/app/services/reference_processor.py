@@ -48,6 +48,14 @@ class ReferenceProcessor:
         self._vad_utils = None
         logger.info("ReferenceProcessor initialized")
 
+    def clear_cache(self):
+        """Clear all cached processed references (use after code changes)."""
+        import shutil
+        if self._cache_dir.exists():
+            for f in self._cache_dir.glob("*.wav"):
+                f.unlink(missing_ok=True)
+            logger.info("Reference cache cleared")
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------

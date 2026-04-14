@@ -52,6 +52,7 @@ class VoiceCloner:
         self._ecapa_model = None
         self._resemblyzer_encoder = None
         self._lock = asyncio.Lock()
+        self._latent_cache: Dict[str, Any] = {}  # reference hash → conditioning latents
         logger.info("VoiceCloner created (model loads lazily on first use)")
 
     # ------------------------------------------------------------------
@@ -92,6 +93,9 @@ class VoiceCloner:
             return
         from app.services.reference_processor import ReferenceProcessor
         self._ref_processor = ReferenceProcessor()
+        # Clear cached references on first load so code changes take effect
+        self._ref_processor.clear_cache()
+        logger.info("Reference processor loaded and cache cleared")
 
     def _ensure_ecapa(self):
         """Lazy-load ECAPA-TDNN for speaker similarity scoring."""
@@ -187,8 +191,8 @@ class VoiceCloner:
         # ---- Step 4: Map language code ----
         lang_code = self._map_language(language)
 
-        # ---- Step 5: XTTS v2 synthesis ----
-        _progress(35, "Synthesizing speech with XTTS v2")
+        # ---- Step 5: XTTS v2 synthesis (best-of-3 with low-level API) ----
+        _progress(35, "Synthesizing speech with XTTS v2 (best-of-3 generation)")
         await asyncio.to_thread(
             self._synthesize,
             text=text,
@@ -228,7 +232,46 @@ class VoiceCloner:
         return output_path, metrics
 
     # ------------------------------------------------------------------
-    # XTTS v2 synthesis (runs in thread)
+    # Conditioning latent extraction (cached)
+    # ------------------------------------------------------------------
+
+    def _get_conditioning_latents(self, speaker_wav: str):
+        """
+        Compute or retrieve cached conditioning latents for a reference audio.
+
+        Uses the full reference (up to 60s) and computes speaker embedding
+        with maximum context for best voice capture.
+        """
+        # Cache key based on file content
+        cache_key = hashlib.sha256(
+            open(speaker_wav, "rb").read()
+        ).hexdigest()[:16]
+
+        if cache_key in self._latent_cache:
+            logger.info("Using cached conditioning latents")
+            return self._latent_cache[cache_key]
+
+        model = self._tts_model.synthesizer.tts_model
+        logger.info("Computing conditioning latents from reference audio...")
+
+        gpt_cond_latent, speaker_embedding = model.get_conditioning_latents(
+            audio_path=[speaker_wav],
+            gpt_cond_len=30,           # use up to 30s for GPT conditioning
+            gpt_cond_chunk_len=4,      # 4s chunks for fine-grained extraction
+            max_ref_length=60,         # load up to 60s of reference (default is 10!)
+            sound_norm_refs=True,      # normalize reference for consistent embedding
+        )
+
+        self._latent_cache[cache_key] = (gpt_cond_latent, speaker_embedding)
+        logger.info(
+            f"Conditioning latents computed and cached "
+            f"(GPT latent shape: {gpt_cond_latent.shape}, "
+            f"speaker emb shape: {speaker_embedding.shape})"
+        )
+        return gpt_cond_latent, speaker_embedding
+
+    # ------------------------------------------------------------------
+    # XTTS v2 synthesis — low-level API with best-of-N
     # ------------------------------------------------------------------
 
     def _synthesize(
@@ -238,14 +281,116 @@ class VoiceCloner:
         language: str,
         file_path: str,
     ):
-        """Run XTTS v2 tts_to_file. Called via asyncio.to_thread."""
+        """
+        High-quality synthesis using the low-level XTTS v2 model API.
+
+        Instead of the high-level tts_to_file() wrapper (which uses default
+        parameters and only 10s of reference), this method:
+          1. Computes conditioning latents with full reference context (up to 60s)
+          2. Runs best-of-3 generation with different temperatures
+          3. Picks the attempt with highest MFCC similarity to reference
+          4. Falls back to tts_to_file() if all else fails
+        """
+        import torch
+
+        # Try low-level API first
+        try:
+            model = self._tts_model.synthesizer.tts_model
+            gpt_cond_latent, speaker_embedding = self._get_conditioning_latents(speaker_wav)
+        except Exception as e:
+            logger.warning(f"Low-level XTTS API unavailable ({e}), using tts_to_file fallback")
+            self._tts_model.tts_to_file(
+                text=text, speaker_wav=speaker_wav,
+                language=language, file_path=file_path, split_sentences=True,
+            )
+            return
+
+        # Best-of-3 with increasing temperature
+        # Lower temperature = more deterministic = closer to reference voice
+        best_wav = None
+        best_similarity = -1.0
+        best_temp = None
+        temperatures = [0.1, 0.3, 0.65]
+
+        for temp in temperatures:
+            try:
+                logger.info(f"Synthesis attempt: temperature={temp}")
+                out = model.inference(
+                    text,
+                    language,
+                    gpt_cond_latent,
+                    speaker_embedding,
+                    temperature=temp,
+                    length_penalty=1.0,
+                    repetition_penalty=10.0,    # high = prevent degenerate loops
+                    top_k=50,
+                    top_p=0.85,
+                    do_sample=True,
+                    speed=1.0,
+                    enable_text_splitting=True,
+                )
+
+                wav = out["wav"]
+                if isinstance(wav, torch.Tensor):
+                    wav = wav.cpu().numpy()
+                wav = wav.squeeze().astype(np.float32)
+
+                if len(wav) < 2000:  # too short = likely degenerate
+                    logger.warning(f"  temp={temp}: output too short ({len(wav)} samples), skipping")
+                    continue
+
+                # Quick MFCC similarity to pick best candidate
+                sim = self._quick_mfcc_similarity(wav, speaker_wav, sr=24000)
+                duration = len(wav) / 24000
+                logger.info(
+                    f"  temp={temp}: similarity={sim:.4f}, "
+                    f"duration={duration:.1f}s"
+                )
+
+                if sim > best_similarity:
+                    best_similarity = sim
+                    best_wav = wav
+                    best_temp = temp
+
+                # Early exit if we already have excellent similarity
+                if sim > 0.85:
+                    logger.info(f"  Excellent similarity at temp={temp}, stopping early")
+                    break
+
+            except Exception as e:
+                logger.warning(f"  Synthesis attempt at temp={temp} failed: {e}")
+                continue
+
+        if best_wav is not None:
+            logger.info(
+                f"Best-of-{len(temperatures)} result: temp={best_temp}, "
+                f"similarity={best_similarity:.4f}"
+            )
+            sf.write(file_path, best_wav, 24000, subtype="PCM_16")
+            return
+
+        # All attempts failed — fall back to high-level API
+        logger.warning("All low-level synthesis attempts failed, falling back to tts_to_file")
         self._tts_model.tts_to_file(
-            text=text,
-            speaker_wav=speaker_wav,
-            language=language,
-            file_path=file_path,
-            split_sentences=True,
+            text=text, speaker_wav=speaker_wav,
+            language=language, file_path=file_path, split_sentences=True,
         )
+
+    def _quick_mfcc_similarity(
+        self, wav: np.ndarray, ref_path: str, sr: int = 24000
+    ) -> float:
+        """Quick MFCC cosine similarity for best-of-N candidate ranking."""
+        try:
+            ref, _ = librosa.load(ref_path, sr=sr, mono=True)
+            mfcc_a = np.mean(librosa.feature.mfcc(y=wav, sr=sr, n_mfcc=20), axis=1)
+            mfcc_b = np.mean(librosa.feature.mfcc(y=ref, sr=sr, n_mfcc=20), axis=1)
+            cos = float(
+                np.dot(mfcc_a, mfcc_b)
+                / (np.linalg.norm(mfcc_a) * np.linalg.norm(mfcc_b) + 1e-8)
+            )
+            return max(0.0, min(1.0, cos))
+        except Exception:
+            return 0.0
 
     # ------------------------------------------------------------------
     # Minimal post-processing
@@ -258,7 +403,8 @@ class VoiceCloner:
         2. Light noise reduction
         3. Loudness normalization to match reference
         """
-        audio, sr = librosa.load(output_path, sr=SAMPLE_RATE, mono=True)
+        # Load at native sample rate to avoid quality loss from resampling
+        audio, sr = librosa.load(output_path, sr=None, mono=True)
 
         # 1. DC offset removal — 2nd-order Butterworth at 20 Hz
         sos = butter(2, 20.0, btype="high", fs=sr, output="sos")
